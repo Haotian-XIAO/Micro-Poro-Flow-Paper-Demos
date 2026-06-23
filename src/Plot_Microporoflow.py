@@ -2,14 +2,30 @@
 # -------------------------------------------------
 # For plotting
 # -------------------------------------------------
+import json
 import os
-import numpy as np
+import sys
+
 import matplotlib.pyplot as plt
-import sys  
-pf_values = [0.0, 0.03,0.06]
-#pf_values = [0]
-#res_folder = sys.argv[0][:-3]
-res_folder = "/Users/xiao/PhD/Codes/dolfin_mech_HX2_clean/dolfin_mech/run_MicroPoroflow"
+import matplotlib.tri as mtri
+import numpy as np
+import pandas as pd
+import pyvista as pv
+
+from matplotlib.lines import Line2D
+from matplotlib.patches import FancyArrowPatch
+from matplotlib.ticker import FormatStrFormatter, FuncFormatter, MaxNLocator
+plt.rcParams.update({
+    "font.size": 15,
+    "axes.titlesize": 16,
+    "axes.labelsize": 15,
+    "xtick.labelsize": 14,
+    "ytick.labelsize": 14,
+    "legend.fontsize": 15,
+    "figure.titlesize": 16,
+})
+
+
 
 def load_qois(qois_filename):
     qois_vals = np.loadtxt(qois_filename)
@@ -30,12 +46,6 @@ def plot_linear_homogenization_hollowbox(
     show_plot=False,
     eps=1e-12,
 ):
-    import os
-    import re
-    import json
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
 
     os.makedirs(os.path.dirname(save_name) or ".", exist_ok=True)
 
@@ -44,6 +54,13 @@ def plot_linear_homogenization_hollowbox(
 
     def fmt_file(x):
         return f"{x:.6g}"
+
+    def shape_label(shape):
+        if shape == "round":
+            return "Microscopic model - circular inclusions"
+        if shape == "hex":
+            return "Microscopic model - hexagonal inclusions"
+        return f"Microscopic model - {shape} inclusions"
 
     def build_basename(shape, r0, probe):
         return f"{res_folder}/{res_basename_prefix}-{shape}-r0={fmt_file(r0)}-{probe}"
@@ -78,6 +95,7 @@ def plot_linear_homogenization_hollowbox(
         }
 
         npts = len(data["Qx"])
+
         for key, val in data.items():
             if len(val) != npts:
                 raise ValueError(f"Inconsistent length for {key} in {filename}")
@@ -94,10 +112,10 @@ def plot_linear_homogenization_hollowbox(
         tr = a + c
         delta = np.sqrt((a - c) ** 2 + 4.0 * b ** 2)
 
-        k1 = 0.5 * (tr + delta)
-        k2 = 0.5 * (tr - delta)
+        K1 = 0.5 * (tr + delta)
+        K2 = 0.5 * (tr - delta)
 
-        return k1, k2
+        return K1, K2
 
     rows = []
 
@@ -142,8 +160,8 @@ def plot_linear_homogenization_hollowbox(
                 dtype=float,
             )
 
-            k1, k2 = principal_values(K)
-            Keq = 0.5 * (k1 + k2)
+            K1, K2 = principal_values(K)
+            Keq = 0.5 * (K1 + K2)
 
             phi = read_phi_from_metadata(shape, r0, "gx")
 
@@ -160,8 +178,8 @@ def plot_linear_homogenization_hollowbox(
                     "Kxy": Kxy,
                     "Kyx": Kyx,
                     "Kyy": Kyy,
-                    "k1": k1,
-                    "k2": k2,
+                    "K1": K1,
+                    "K2": K2,
                     "Keq": Keq,
                 }
             )
@@ -192,6 +210,11 @@ def plot_linear_homogenization_hollowbox(
         "hex": "s",
     }
 
+    linestyles = {
+        "round": "-",
+        "hex": "--",
+    }
+
     for shape in shape_list:
         sub = df[df["shape"] == shape]
 
@@ -200,47 +223,38 @@ def plot_linear_homogenization_hollowbox(
 
         ax.plot(
             sub["phi"],
-            sub["k1"],
+            sub["Keq"] / Km,
             marker=markers.get(shape, "o"),
-            linestyle="-",
+            linestyle=linestyles.get(shape, "-"),
             linewidth=2.0,
             markerfacecolor="white",
-            label=rf"{shape}: $k_1$",
-        )
-
-        ax.plot(
-            sub["phi"],
-            sub["k2"],
-            marker=markers.get(shape, "s"),
-            linestyle="--",
-            linewidth=2.0,
-            markerfacecolor="white",
-            label=rf"{shape}: $k_2$",
+            label=shape_label(shape),
         )
 
     ax.plot(
         phi_grid[mask_dilute],
-        K_dilute[mask_dilute],
+        K_dilute[mask_dilute] / Km,
         color="black",
         linestyle=":",
         linewidth=2.0,
-        label=r"dilute: $1-2\tilde{\Phi}_{g0}$",
+        label="Dilute scheme",
     )
 
     ax.plot(
         phi_grid,
-        K_diff,
+        K_diff / Km,
         color="black",
         linestyle="-.",
         linewidth=2.0,
-        label=r"differential: $(1-\tilde{\Phi}_{g0})^2$",
+        label="Differential scheme",
     )
 
     ax.set_xlabel(r"$\tilde{\Phi}_{g0}$", fontsize=14)
-    ax.set_ylabel(r"$k_i/K_m$", fontsize=14)
+    ax.set_ylabel(r"$K_i/K_m$", fontsize=14)
     ax.tick_params(axis="both", labelsize=12)
     ax.grid(False)
     ax.legend(fontsize=9.5, frameon=True)
+
     plt.tight_layout()
     plt.savefig(save_name, bbox_inches="tight", dpi=300)
 
@@ -250,626 +264,6 @@ def plot_linear_homogenization_hollowbox(
     plt.close()
 
     print("Saved:", save_name)
-
-def plot_K_vs_pg_multi_Ex(
-    res_folder,
-    res_basename_prefix,
-    Ex_list,
-    slice_start=0,
-    eps=1e-12,
-    pg_key="p_f",       
-    gx_key="grad_p_bar_avg_x",
-    gy_key="grad_p_bar_avg_y",
-    qx_key="Q_l_avg_x",
-    qy_key="Q_l_avg_y",
-    pg_in_kPa=True,
-    savepath="plots/K_vs_pf_multi_Ex.png",
-):
-    os.makedirs("plots", exist_ok=True)
-
-    fig, ax = plt.subplots(figsize=(7.6, 5.2))
-
-    colors = [
-        ("#1f77b4", "#aec7e8"),
-        ("#d62728", "#ff9896"),
-        ("#2ca02c", "#98df8a"),
-        ("#9467bd", "#c5b0d5"),
-        ("#8c564b", "#c49c94"),
-    ]
-
-    for idx, Ex in enumerate(Ex_list):
-        filename = f"{res_folder}/{res_basename_prefix}-Ex={Ex}-qois.dat"
-        if not os.path.exists(filename):
-            print(f"[WARNING] File missing: {filename}")
-            continue
-
-        qois_vals, names = load_qois(filename)
-
-        pf = get(qois_vals, names, pg_key)[slice_start:].astype(float)
-        if not pg_in_kPa:
-            pf = pf / 1000.0
-
-        gx = get(qois_vals, names, gx_key)[slice_start:].astype(float)
-        gy = get(qois_vals, names, gy_key)[slice_start:].astype(float)
-        qx = get(qois_vals, names, qx_key)[slice_start:].astype(float)
-        qy = get(qois_vals, names, qy_key)[slice_start:].astype(float)
-
-        Kxx = -qx / (gx + eps)
-        Kyy = -qy / (gy + eps)
-
-        order = np.argsort(pf)
-        pf, Kxx, Kyy = pf[order], Kxx[order], Kyy[order]
-
-        c_dark, c_light = colors[idx % len(colors)]
-        ax.plot(pf, Kxx, color=c_dark,  lw=2.6, label=rf"$\tilde{{K}}_{{xx}}$, $E_x={Ex}$")
-        ax.plot(pf, Kyy, color=c_light, lw=2.6, label=rf"$\tilde{{K}}_{{yy}}$, $E_x={Ex}$")
-
-        print(f"Read: {os.path.basename(filename)}  points={len(pf)}")
-
-    ax.set_xlabel(r"$p_f\,(kPa)$", fontsize=16)  
-    ax.set_ylabel(r"$\tilde{K}_{xx},\,\tilde{K}_{yy}\,(m^2/(Pa\cdot s))$", fontsize=16)
-    #ax.grid(ls="--", alpha=0.4)
-    ax.legend(fontsize=11, framealpha=0.9, loc="upper left")
-
-    plt.tight_layout()
-    plt.savefig(savepath, bbox_inches="tight",dpi=300)
-    plt.close()
-    print(f"Saved: {savepath}")
-
-
-def plot_q_vs_gradp_multi_pf(res_folder, pf_list, res_basename_prefix, k_hom=None):
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import os
-
-    os.makedirs("plots", exist_ok=True)
-
-    colors = [
-        ("#1f77b4", "#aec7e8"),
-        ("#d62728", "#ff9896"),
-        ("#2ca02c", "#98df8a"),
-        ("#9467bd", "#c5b0d5"),
-    ]
-
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.8))
-    axx, axy = axes
-
-    gx_all, qx_all, gy_all, qy_all = [], [], [], []
-
-    for idx, pf in enumerate(pf_list):
-        filename = f"{res_folder}/{res_basename_prefix}-pf={pf}-qois.dat"
-        if not os.path.exists(filename):
-            print(f"[WARNING] File missing: {filename}")
-            continue
-
-        qois_vals, names = load_qois(filename)
-
-        qx = get(qois_vals, names, "q_avg_x")[2:]
-        qy = get(qois_vals, names, "q_avg_y")[2:]
-        gx = get(qois_vals, names, "grad_p_bar_x")[2:]
-        gy = get(qois_vals, names, "grad_p_bar_y")[2:]
-
-        # store for reference line range
-        gx_all.append(gx); qx_all.append(qx)
-        gy_all.append(gy); qy_all.append(qy)
-
-        c_dark, c_light = colors[idx % len(colors)]
-
-        axx.plot(gx, qx, color=c_dark, linewidth=2.5, label=rf"$p_f={pf}$")
-        axy.plot(gy, qy, color=c_light, linewidth=2.5, label=rf"$p_f={pf}$")
-
-    # ---- add theoretical reference lines ----
-    if k_hom is not None:
-        k_hom = np.asarray(k_hom, dtype=float)
-        kxx = k_hom[0, 0]
-        kyy = k_hom[1, 1]
-
-        # pick a reasonable x-range from all datasets
-        if len(gx_all) > 0:
-            gx_min = min([np.min(g) for g in gx_all])
-            gx_max = max([np.max(g) for g in gx_all])
-            gx_ref = np.linspace(gx_min, gx_max, 200)
-            axx.plot(gx_ref, -kxx * gx_ref, "k--", linewidth=2.0,
-                     label=rf"linear model: $q_x=-k_{{xx}}\nabla\bar p_x$ ($k_{{xx}}={kxx:.3g}$)")
-
-        if len(gy_all) > 0:
-            gy_min = min([np.min(g) for g in gy_all])
-            gy_max = max([np.max(g) for g in gy_all])
-            gy_ref = np.linspace(gy_min, gy_max, 200)
-            axy.plot(gy_ref, -kyy * gy_ref, "k--", linewidth=2.0,
-                     label=rf"linear model: $q_y=-k_{{yy}}\nabla\bar p_y$ ($k_{{yy}}={kyy:.3g}$)")
-
-    axx.set_xlabel(r"$\nabla \bar{p}_x$", fontsize=16)
-    axx.set_ylabel(r"$q_x$", fontsize=16)
-    axx.grid(ls="--", alpha=0.4)
-    axx.legend(fontsize=11, framealpha=0.9)
-
-    axy.set_xlabel(r"$\nabla \bar{p}_y$", fontsize=16)
-    axy.set_ylabel(r"$q_y$", fontsize=16)
-    axy.grid(ls="--", alpha=0.4)
-    axy.legend(fontsize=11, framealpha=0.9)
-
-    plt.tight_layout()
-    plt.savefig("plots/q_vs_gradp_multi_pf.png", bbox_inches="tight")
-    plt.close()
-    print("Saved: plots/q_vs_gradp_multi_pf.png")
-
-def plot_Kxx_Kyy_vs_Uxx_multi_pf(
-    res_folder,
-    pf_list,
-    res_basename_prefix,
-    phi=None,
-    include_pf_in_filename=True,
-    K0_ref=None,
-    slice_start=5,
-    eps=1e-12,
-    normalize=True,
-    add_prediction=True,
-    save_name="plots/Kxx_Kyy_vs_Uxx_multi_pf.png",
-    show_plot=False,
-):
-    import os
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    os.makedirs("plots", exist_ok=True)
-
-    colors = [
-        ("#1f77b4", "#aec7e8"),
-        ("#d62728", "#ff9896"),
-        ("#2ca02c", "#98df8a"),
-        ("#9467bd", "#c5b0d5"),
-        ("#ff7f0e", "#ffbb78"),
-    ]
-
-    fig, ax = plt.subplots(figsize=(7.6, 5.2))
-
-    # sanitize optional global K0
-    if K0_ref is not None:
-        K0_global = np.asarray(K0_ref, dtype=float)
-        if K0_global.shape != (2, 2):
-            raise ValueError(f"K0_ref must be shape (2,2), got {K0_global.shape}")
-    else:
-        K0_global = None
-
-    for idx, pf in enumerate(pf_list):
-        filename = f"{res_folder}/{res_basename_prefix}"
-
-        if include_pf_in_filename:
-            filename += f"-pf={pf}"
-
-        if phi is not None:
-            phi_str = f"{phi:.3f}".replace(".", "p") if isinstance(phi, float) else str(phi)
-            filename += f"-phi={phi_str}"
-
-        filename += "-qois.dat"
-
-        if not os.path.exists(filename):
-            print(f"[WARNING] File missing: {filename}")
-            continue
-
-        qois_vals, names = load_qois(filename)
-
-        # --- macro displacement-gradient components ---
-        Uxx = get(qois_vals, names, "U_bar_XX")[slice_start:]
-        Uyy = get(qois_vals, names, "U_bar_YY")[slice_start:]
-        Uxy = get(qois_vals, names, "U_bar_XY")[slice_start:]  # assume Uyx = Uxy
-
-        # --- Darcy outputs ---
-        Qx = get(qois_vals, names, "Q_l_avg_x")[slice_start:]
-        Qy = get(qois_vals, names, "Q_l_avg_y")[slice_start:]
-        gx = get(qois_vals, names, "grad_p_bar_avg_x")[slice_start:]
-        gy = get(qois_vals, names, "grad_p_bar_avg_y")[slice_start:]
-
-        Uxx = np.asarray(Uxx, dtype=float)
-        Uyy = np.asarray(Uyy, dtype=float)
-        Uxy = np.asarray(Uxy, dtype=float)
-        Qx  = np.asarray(Qx,  dtype=float)
-        Qy  = np.asarray(Qy,  dtype=float)
-        gx  = np.asarray(gx,  dtype=float)
-        gy  = np.asarray(gy,  dtype=float)
-
-        npts = len(Uxx)
-        if not (len(Uyy) == len(Uxy) == len(Qx) == len(Qy) == len(gx) == len(gy) == npts):
-            raise ValueError(f"Inconsistent array lengths in file: {filename}")
-
-        # --- measured reference permeability ---
-        # Q = - K_ref * grad_X(p)
-        # This is exact only if each probing case isolates one gradient direction.
-        Kxx_ref = -Qx / (gx + eps)
-        Kyy_ref = -Qy / (gy + eps)
-
-        # choose K0
-        if K0_global is not None:
-            K0 = K0_global.copy()
-        else:
-            # fallback: diagonal tensor from first available measured point
-            K0 = np.array([
-                [float(Kxx_ref[0]), 0.0],
-                [0.0, float(Kyy_ref[0])]
-            ], dtype=float)
-
-        # --- purely kinematic prediction ---
-        Kxx_pred = np.full_like(Kxx_ref, np.nan)
-        Kyy_pred = np.full_like(Kyy_ref, np.nan)
-
-        F0 = np.array([
-        [1.0 + Uxx[0], Uxy[0]],
-        [Uxy[0], 1.0 + Uyy[0]]
-    ], dtype=float)
-        print("F0 =\n", F0)
-        print("det(F0) =", np.linalg.det(F0))
-
-        if add_prediction:
-            for n in range(npts):
-                F = np.array([
-                    [1.0 + Uxx[n], Uxy[n]],
-                    [Uxy[n], 1.0 + Uyy[n]]
-                ], dtype=float)
-
-                J = float(np.linalg.det(F))
-                if abs(J) < 1e-14:
-                    continue
-
-                try:
-                    Finv = np.linalg.inv(F)
-                except np.linalg.LinAlgError:
-                    continue
-
-                K_pred = J * (Finv @ K0 @ Finv.T)
-
-                Kxx_pred[n] = K_pred[0, 0]
-                Kyy_pred[n] = K_pred[1, 1]
-
-        # --- normalization ---
-        if normalize:
-            Kxx0 = K0[0, 0]
-            Kyy0 = K0[1, 1]
-
-            if abs(Kxx0) < eps or abs(Kyy0) < eps:
-                raise ValueError(
-                    f"K0 diagonal too small for normalization: "
-                    f"K0_xx={Kxx0}, K0_yy={Kyy0}"
-                )
-
-            yKxx = Kxx_ref / Kxx0
-            yKyy = Kyy_ref / Kyy0
-            yKxx_pred = Kxx_pred / Kxx0
-            yKyy_pred = Kyy_pred / Kyy0
-
-            ylabel = r"$K_{xx}^{ref}/K_{xx,0}^{ref},\;K_{yy}^{ref}/K_{yy,0}^{ref}$"
-        else:
-            yKxx = Kxx_ref
-            yKyy = Kyy_ref
-            yKxx_pred = Kxx_pred
-            yKyy_pred = Kyy_pred
-
-            ylabel = r"$K_{xx}^{ref},\;K_{yy}^{ref}\;(\mathrm{m}^2\,\mathrm{Pa}^{-1}\,\mathrm{s}^{-1})$"
-
-        c_dark, c_light = colors[idx % len(colors)]
-
-        # --- measured curves ---
-        ax.plot(
-            Uxx, yKxx,
-            color=c_dark, linewidth=2.4,
-            label=rf"$K_{{xx}}^{{ref}}$, $p_f={pf}$"
-        )
-        ax.plot(
-            Uxx, yKyy,
-            color=c_light, linewidth=2.4,
-            label=rf"$K_{{yy}}^{{ref}}$, $p_f={pf}$"
-        )
-
-        # --- predicted curves ---
-        if add_prediction:
-            ax.plot(
-                Uxx, yKxx_pred,
-                "--", color=c_dark, linewidth=1.8,
-                label=rf"$J F^{{-1}} K_0 F^{{-T}}$ ($xx$), $p_f={pf}$"
-            )
-            ax.plot(
-                Uxx, yKyy_pred,
-                "--", color=c_light, linewidth=1.8,
-                label=rf"$J F^{{-1}} K_0 F^{{-T}}$ ($yy$), $p_f={pf}$"
-            )
-
-        print(f"pf = {pf}")
-        print(f"K0 used for prediction:\n{K0}")
-
-    ax.set_xlabel(r"$U_{XX}$", fontsize=14)
-    ax.set_ylabel(ylabel, fontsize=14)
-    ax.tick_params(axis="both", labelsize=12)
-    ax.legend(fontsize=8.8, framealpha=0.95, ncol=1)
-    plt.tight_layout()
-    plt.savefig(save_name, bbox_inches="tight", dpi=300)
-    if show_plot:
-        plt.show()
-    plt.close()
-
-    print(f"Saved: {save_name}")
-
-
-
-def plot_fig7_summary(
-    cases,
-    r0_list,
-    r0_to_phi=None,
-    slice_start=5,
-    final_index=-1,
-    eps=1e-12,
-    save_name="plots/Figure7_summary.png",
-    show_plot=False,
-):
-    import os
-    import json
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    os.makedirs(os.path.dirname(save_name) or ".", exist_ok=True)
-
-    colors = {
-        "stretch-x": "#0072B2",
-        "stretch-y": "#D55E00",
-        "pure shear": "#009E73",
-        "gas pressure": "#CC79A7",
-    }
-
-    markers = {
-        "stretch-x": "o",
-        "stretch-y": "s",
-        "pure shear": "^",
-        "gas pressure": "D",
-    }
-
-    def build_basename(case, r0, pf, probe):
-        return f"{case['res_folder']}/{case['prefix']}-r0={r0}-pf={pf}-{probe}"
-
-    def read_phi(basename, r0):
-        metadata_file = basename + "-metadata.json"
-
-        if os.path.exists(metadata_file):
-            with open(metadata_file, "r") as f:
-                metadata = json.load(f)
-
-            for key in ["mesh_porosity", "porosity", "phi"]:
-                if key in metadata:
-                    return float(metadata[key])
-
-        if r0_to_phi is not None:
-            return float(r0_to_phi[r0])
-
-        return float(r0)
-
-    def read_probe(filename):
-        qois_vals, names = load_qois(filename)
-
-        data = {
-            "Uxx": np.asarray(get(qois_vals, names, "U_bar_XX")[slice_start:], dtype=float),
-            "Uyy": np.asarray(get(qois_vals, names, "U_bar_YY")[slice_start:], dtype=float),
-            "Uxy": np.asarray(get(qois_vals, names, "U_bar_XY")[slice_start:], dtype=float),
-            "Uyx": np.asarray(get(qois_vals, names, "U_bar_YX")[slice_start:], dtype=float),
-            "Qx": np.asarray(get(qois_vals, names, "Q_l_avg_x")[slice_start:], dtype=float),
-            "Qy": np.asarray(get(qois_vals, names, "Q_l_avg_y")[slice_start:], dtype=float),
-            "gx": np.asarray(get(qois_vals, names, "grad_p_bar_avg_x")[slice_start:], dtype=float),
-            "gy": np.asarray(get(qois_vals, names, "grad_p_bar_avg_y")[slice_start:], dtype=float),
-        }
-
-        npts = len(data["Uxx"])
-
-        for key, val in data.items():
-            if len(val) != npts:
-                raise ValueError(f"Inconsistent length for {key} in {filename}")
-
-        return data
-
-    def read_K_and_F(case, r0, pf):
-        basename_gx = build_basename(case, r0, pf, "gx")
-        basename_gy = build_basename(case, r0, pf, "gy")
-
-        file_gx = basename_gx + "-qois.dat"
-        file_gy = basename_gy + "-qois.dat"
-
-        if not os.path.exists(file_gx):
-            raise FileNotFoundError(file_gx)
-
-        if not os.path.exists(file_gy):
-            raise FileNotFoundError(file_gy)
-
-        data_gx = read_probe(file_gx)
-        data_gy = read_probe(file_gy)
-
-        gx = data_gx["gx"]
-        gy = data_gy["gy"]
-
-        Kxx = -data_gx["Qx"] / (gx + eps)
-        Kyx = -data_gx["Qy"] / (gx + eps)
-        Kxy = -data_gy["Qx"] / (gy + eps)
-        Kyy = -data_gy["Qy"] / (gy + eps)
-
-        K_list = []
-        F_list = []
-
-        for n in range(len(Kxx)):
-            K_list.append(
-                np.array(
-                    [
-                        [Kxx[n], Kxy[n]],
-                        [Kyx[n], Kyy[n]],
-                    ],
-                    dtype=float,
-                )
-            )
-
-            F_list.append(
-                np.array(
-                    [
-                        [1.0 + data_gx["Uxx"][n], data_gx["Uxy"][n]],
-                        [data_gx["Uyx"][n], 1.0 + data_gx["Uyy"][n]],
-                    ],
-                    dtype=float,
-                )
-            )
-
-        phi = read_phi(basename_gx, r0)
-
-        return K_list, F_list, phi
-
-    def compute_indicators(K0, Kf, Ff, use_prediction):
-        C_K = np.trace(Kf) / (np.trace(K0) + eps)
-
-        Ksym = 0.5 * (Kf + Kf.T)
-        eigvals = np.linalg.eigvalsh(Ksym)
-        eig_min = np.min(eigvals)
-        eig_max = np.max(eigvals)
-
-        if eig_min <= eps:
-            A_K = np.nan
-        else:
-            A_K = eig_max / eig_min
-
-        if use_prediction:
-            J = float(np.linalg.det(Ff))
-            Finv = np.linalg.inv(Ff)
-            K_pred = J * (Finv @ K0 @ Finv.T)
-            E_K = np.linalg.norm(Kf - K_pred, ord="fro") / (
-                np.linalg.norm(Kf, ord="fro") + eps
-            )
-        else:
-            E_K = np.nan
-
-        return C_K, A_K, E_K
-
-    rows = []
-
-    for case in cases:
-        label = case["label"]
-        kind = case.get("kind", "deformation")
-
-        for r0 in r0_list:
-            try:
-                if kind == "deformation":
-                    pf = case.get("pf", 0.0)
-                    K_list, F_list, phi = read_K_and_F(case, r0, pf)
-
-                    K0 = K_list[0]
-                    Kf = K_list[final_index]
-                    Ff = F_list[final_index]
-
-                    C_K, A_K, E_K = compute_indicators(
-                        K0=K0,
-                        Kf=Kf,
-                        Ff=Ff,
-                        use_prediction=True,
-                    )
-
-                elif kind == "gas_pressure":
-                    pf_ref = case.get("pf_ref", 0.0)
-                    pf_target = case["pf_target"]
-
-                    K_ref_list, F_ref_list, phi = read_K_and_F(case, r0, pf_ref)
-                    K_tar_list, F_tar_list, _ = read_K_and_F(case, r0, pf_target)
-
-                    K0 = K_ref_list[final_index]
-                    Kf = K_tar_list[final_index]
-                    Ff = F_tar_list[final_index]
-
-                    C_K, A_K, E_K = compute_indicators(
-                        K0=K0,
-                        Kf=Kf,
-                        Ff=Ff,
-                        use_prediction=False,
-                    )
-
-                else:
-                    raise ValueError(f"Unknown case kind: {kind}")
-
-                rows.append(
-                    {
-                        "label": label,
-                        "r0": r0,
-                        "phi": phi,
-                        "C_K": C_K,
-                        "A_K": A_K,
-                        "E_K": E_K,
-                    }
-                )
-
-                print(
-                    f"{label}, r0={r0}, phi={phi:.6f}, "
-                    f"C_K={C_K:.6f}, A_K={A_K:.6f}, E_K={E_K:.6f}"
-                )
-
-            except FileNotFoundError as e:
-                print(f"[WARNING] Missing file: {e}")
-                continue
-
-    fig, axes = plt.subplots(1, 3, figsize=(12.5, 3.6))
-
-    plot_settings = [
-        ("C_K", r"$C_K=\mathrm{tr}(\mathbf{K})/\mathrm{tr}(\mathbf{K}_0)$"),
-        ("A_K", r"$A_K=k_{\max}/k_{\min}$"),
-        ("E_K", r"$E_K=\|\mathbf{K}-\mathbf{K}^{pred}\|_F/\|\mathbf{K}\|_F$"),
-    ]
-
-    for ax, (key, ylabel) in zip(axes, plot_settings):
-        for case in cases:
-            label = case["label"]
-            case_rows = [row for row in rows if row["label"] == label]
-
-            if not case_rows:
-                continue
-
-            case_rows = sorted(case_rows, key=lambda row: row["phi"])
-
-            x = np.array([row["phi"] for row in case_rows], dtype=float)
-            y = np.array([row[key] for row in case_rows], dtype=float)
-
-            valid = np.isfinite(y)
-
-            if not np.any(valid):
-                continue
-
-            ax.plot(
-                x[valid],
-                y[valid],
-                color=colors.get(label, "black"),
-                marker=markers.get(label, "o"),
-                markersize=5.5,
-                linewidth=2.0,
-                label=label,
-            )
-
-        ax.set_xlabel(r"Porosity $\phi$", fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.tick_params(axis="both", labelsize=10)
-        ax.grid(True, linewidth=0.5, alpha=0.3)
-
-    axes[0].axhline(1.0, color="0.5", linewidth=1.0, linestyle="--")
-    axes[1].axhline(1.0, color="0.5", linewidth=1.0, linestyle="--")
-    axes[2].axhline(0.0, color="0.5", linewidth=1.0, linestyle="--")
-
-    handles, labels = axes[0].get_legend_handles_labels()
-
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        ncol=max(1, len(labels)),
-        frameon=False,
-        fontsize=11,
-    )
-
-    plt.tight_layout(rect=[0.0, 0.0, 1.0, 0.88])
-    plt.savefig(save_name, bbox_inches="tight", dpi=300)
-
-    if show_plot:
-        plt.show()
-
-    plt.close()
-
-    print(f"Saved: {save_name}")
-
-    return rows
 
 
 def plot_principal_K_vs_U(
@@ -895,14 +289,6 @@ def plot_principal_K_vs_U(
     theta_in_degrees=True,
     theta_lift_threshold_deg=-85.0,
 ):
-    import os
-    import json
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import matplotlib.tri as mtri
-    import pyvista as pv
-    from matplotlib.lines import Line2D
-
     os.makedirs(os.path.dirname(save_name) or ".", exist_ok=True)
 
     x_components = {
@@ -910,6 +296,13 @@ def plot_principal_K_vs_U(
         "yy": "Uyy",
         "xy": "Uxy",
         "yx": "Uyx",
+    }
+
+    x_labels = {
+        "xx": r"$E_x$",
+        "yy": r"$E_y$",
+        "xy": r"$E_{xy}$",
+        "yx": r"$E_{yx}$",
     }
 
     if x_component not in x_components:
@@ -926,19 +319,40 @@ def plot_principal_K_vs_U(
 
     def build_basename(folder, prefix, r0, pf, probe):
         filename = f"{folder}/{prefix}-r0={r0}-pf={pf}-{probe}"
+
         if phi is not None:
             phi_str = f"{phi:.3f}".replace(".", "p") if isinstance(phi, float) else str(phi)
             filename += f"-phi={phi_str}"
+
         return filename
 
     def build_filename(r0, pf, probe):
-        return build_basename(res_folder, res_basename_prefix, r0, pf, probe) + "-qois.dat"
+        return build_basename(
+            res_folder,
+            res_basename_prefix,
+            r0,
+            pf,
+            probe,
+        ) + "-qois.dat"
 
     def build_xdmf_filename(r0, pf, probe):
-        return build_basename(xdmf_folder, xdmf_basename_prefix, r0, pf, probe) + ".xdmf"
+        return build_basename(
+            xdmf_folder,
+            xdmf_basename_prefix,
+            r0,
+            pf,
+            probe,
+        ) + ".xdmf"
 
     def read_phi_from_metadata(r0, pf, probe="gx"):
-        basename = build_basename(res_folder, res_basename_prefix, r0, pf, probe)
+        basename = build_basename(
+            res_folder,
+            res_basename_prefix,
+            r0,
+            pf,
+            probe,
+        )
+
         metadata_file = basename + "-metadata.json"
 
         if os.path.exists(metadata_file):
@@ -951,18 +365,51 @@ def plot_principal_K_vs_U(
 
         return None
 
+    def format_phi_value(value):
+        if value is None or not np.isfinite(value):
+            return "?"
+
+        if abs(value) < 1e-12:
+            return "0"
+
+        return f"{value:.2f}"
+
     def read_probe(filename):
         qois_vals, names = load_qois(filename)
 
         data = {
-            "Uxx": np.asarray(get(qois_vals, names, "U_bar_XX")[slice_start:], dtype=float),
-            "Uyy": np.asarray(get(qois_vals, names, "U_bar_YY")[slice_start:], dtype=float),
-            "Uxy": np.asarray(get(qois_vals, names, "U_bar_XY")[slice_start:], dtype=float),
-            "Uyx": np.asarray(get(qois_vals, names, "U_bar_YX")[slice_start:], dtype=float),
-            "Qx": np.asarray(get(qois_vals, names, "Q_l_avg_x")[slice_start:], dtype=float),
-            "Qy": np.asarray(get(qois_vals, names, "Q_l_avg_y")[slice_start:], dtype=float),
-            "gx": np.asarray(get(qois_vals, names, "grad_p_bar_avg_x")[slice_start:], dtype=float),
-            "gy": np.asarray(get(qois_vals, names, "grad_p_bar_avg_y")[slice_start:], dtype=float),
+            "Uxx": np.asarray(
+                get(qois_vals, names, "U_bar_XX")[slice_start:],
+                dtype=float,
+            ),
+            "Uyy": np.asarray(
+                get(qois_vals, names, "U_bar_YY")[slice_start:],
+                dtype=float,
+            ),
+            "Uxy": np.asarray(
+                get(qois_vals, names, "U_bar_XY")[slice_start:],
+                dtype=float,
+            ),
+            "Uyx": np.asarray(
+                get(qois_vals, names, "U_bar_YX")[slice_start:],
+                dtype=float,
+            ),
+            "Qx": np.asarray(
+                get(qois_vals, names, "Q_l_avg_x")[slice_start:],
+                dtype=float,
+            ),
+            "Qy": np.asarray(
+                get(qois_vals, names, "Q_l_avg_y")[slice_start:],
+                dtype=float,
+            ),
+            "gx": np.asarray(
+                get(qois_vals, names, "grad_p_bar_avg_x")[slice_start:],
+                dtype=float,
+            ),
+            "gy": np.asarray(
+                get(qois_vals, names, "grad_p_bar_avg_y")[slice_start:],
+                dtype=float,
+            ),
         }
 
         npts = len(data["Uxx"])
@@ -983,7 +430,12 @@ def plot_principal_K_vs_U(
         theta_cont[0] = theta_raw[0]
 
         for i in range(1, len(theta_raw)):
-            delta = (theta_raw[i] - theta_cont[i - 1] + 90.0) % 180.0 - 90.0
+            delta = (
+                theta_raw[i]
+                - theta_cont[i - 1]
+                + 90.0
+            ) % 180.0 - 90.0
+
             theta_cont[i] = theta_cont[i - 1] + delta
 
         return theta_cont
@@ -998,7 +450,12 @@ def plot_principal_K_vs_U(
         theta_cont[0] = theta_raw[0]
 
         for i in range(1, len(theta_raw)):
-            delta = (theta_raw[i] - theta_cont[i - 1] + 0.5 * np.pi) % np.pi - 0.5 * np.pi
+            delta = (
+                theta_raw[i]
+                - theta_cont[i - 1]
+                + 0.5 * np.pi
+            ) % np.pi - 0.5 * np.pi
+
             theta_cont[i] = theta_cont[i - 1] + delta
 
         return theta_cont
@@ -1015,8 +472,8 @@ def plot_principal_K_vs_U(
         return theta
 
     def principal_quantities(K_list):
-        k1 = []
-        k2 = []
+        K1 = []
+        K2 = []
         theta = []
 
         for K in K_list:
@@ -1034,12 +491,12 @@ def plot_principal_K_vs_U(
 
             angle = 0.5 * np.arctan2(2.0 * b, a - c)
 
-            k1.append(lam1)
-            k2.append(lam2)
+            K1.append(lam1)
+            K2.append(lam2)
             theta.append(angle)
 
-        k1 = np.asarray(k1, dtype=float)
-        k2 = np.asarray(k2, dtype=float)
+        K1 = np.asarray(K1, dtype=float)
+        K2 = np.asarray(K2, dtype=float)
         theta = np.asarray(theta, dtype=float)
 
         if theta_in_degrees:
@@ -1050,29 +507,53 @@ def plot_principal_K_vs_U(
             theta = continuous_axis_angle_rad(theta)
             theta = lift_negative_vertical_rad(theta)
 
-        return k1, k2, theta
+        return K1, K2, theta
 
     def plot_stream_subplot(ax, xdmf_file):
         if not os.path.exists(xdmf_file):
-            ax.text(0.5, 0.5, "missing xdmf", ha="center", va="center", transform=ax.transAxes)
+            ax.text(
+                0.5,
+                0.5,
+                "missing xdmf",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+
             ax.set_xticks([])
             ax.set_yticks([])
+
             for spine in ax.spines.values():
                 spine.set_visible(False)
+
             return None
 
         reader0 = pv.get_reader(xdmf_file)
-        if hasattr(reader0, "number_time_points") and reader0.number_time_points > 0:
+
+        if (
+            hasattr(reader0, "number_time_points")
+            and reader0.number_time_points > 0
+        ):
             reader0.set_active_time_point(0)
+
         mesh0 = reader0.read().cell_data_to_point_data()
         surf0 = mesh0.extract_surface().triangulate()
 
         reader = pv.get_reader(xdmf_file)
-        if hasattr(reader, "number_time_points") and reader.number_time_points > 0:
+
+        if (
+            hasattr(reader, "number_time_points")
+            and reader.number_time_points > 0
+        ):
             reader.set_active_time_point(reader.number_time_points - 1)
+
         mesh = reader.read().cell_data_to_point_data()
 
-        warped = mesh.warp_by_vector("U_tot", factor=stream_scale)
+        warped = mesh.warp_by_vector(
+            "U_tot",
+            factor=stream_scale,
+        )
+
         surf = warped.extract_surface().triangulate()
 
         pts = surf.points[:, :2]
@@ -1085,16 +566,32 @@ def plot_principal_K_vs_U(
         c = pts.mean(axis=0)
         pts0_shift = pts0 + (c - c0)
 
-        p = np.asarray(surf.point_data["pl_tot"], dtype=float)
-        q = np.asarray(surf.point_data["q_l"][:, :2], dtype=float)
+        p = np.asarray(
+            surf.point_data["pl_tot"],
+            dtype=float,
+        )
+
+        q = np.asarray(
+            surf.point_data["q_l"][:, :2],
+            dtype=float,
+        )
 
         x = pts[:, 0]
         y = pts[:, 1]
         qx = q[:, 0]
         qy = q[:, 1]
 
-        triang = mtri.Triangulation(x, y, triangles=faces)
-        triang0 = mtri.Triangulation(pts0_shift[:, 0], pts0_shift[:, 1], triangles=faces0)
+        triang = mtri.Triangulation(
+            x,
+            y,
+            triangles=faces,
+        )
+
+        triang0 = mtri.Triangulation(
+            pts0_shift[:, 0],
+            pts0_shift[:, 1],
+            triangles=faces0,
+        )
 
         interp_p = mtri.LinearTriInterpolator(triang, p)
         interp_qx = mtri.LinearTriInterpolator(triang, qx)
@@ -1140,26 +637,28 @@ def plot_principal_K_vs_U(
         )
 
         cf = ax.contourf(
-            X, Y, P,
+            X,
+            Y,
+            P,
             levels=60,
-            cmap="inferno",
+            cmap="coolwarm",
             alpha=0.65,
             zorder=2,
         )
 
-        stream_kwargs = dict(
-            density=stream_density,
-            color="#66F7FF",
-            linewidth=1.2,
-            arrowsize=1.2,
-            arrowstyle="->",
-            minlength=0.02,
-            maxlength=10.0,
-            integration_direction="both",
-        )
+        stream_kwargs = {
+            "density": stream_density,
+            "color": "#66F7FF",
+            "linewidth": 1.2,
+            "arrowsize": 1.2,
+            "arrowstyle": "->",
+            "minlength": 0.02,
+            "maxlength": 10.0,
+            "integration_direction": "both",
+        }
 
         try:
-            ax.streamplot(
+            sp = ax.streamplot(
                 xi,
                 yi,
                 QX,
@@ -1168,13 +667,16 @@ def plot_principal_K_vs_U(
                 **stream_kwargs,
             )
         except TypeError:
-            ax.streamplot(
+            sp = ax.streamplot(
                 xi,
                 yi,
                 QX,
                 QY,
                 **stream_kwargs,
             )
+
+        sp.lines.set_zorder(4)
+        sp.arrows.set_zorder(5)
 
         pad_x = 0.01 * (x.max() - x.min())
         pad_y = 0.01 * (y.max() - y.min())
@@ -1200,14 +702,15 @@ def plot_principal_K_vs_U(
         return cf
 
     colors = {
-        "k1": "#0072B2",
-        "k2": "#D55E00",
+        "K1": "#0072B2",
+        "K2": "#D55E00",
         "theta": "#009E73",
+        "undef": "#009E73",
     }
 
     markers = {
-        "k1": "o",
-        "k2": "s",
+        "K1": "o",
+        "K2": "s",
         "theta": "^",
     }
 
@@ -1217,7 +720,7 @@ def plot_principal_K_vs_U(
     fig, axes = plt.subplots(
         3,
         n_cols,
-        figsize=(fig_width, 10.5),
+        figsize=(fig_width, 10.8),
         sharex=False,
         sharey=False,
         squeeze=False,
@@ -1233,6 +736,7 @@ def plot_principal_K_vs_U(
 
     cf_last = None
     all_theta_values = []
+    phi_values_by_column = []
 
     for i_r0, r0 in enumerate(r0_list):
         eig_ax = eig_axes[i_r0]
@@ -1240,6 +744,7 @@ def plot_principal_K_vs_U(
         stream_ax = stream_axes[i_r0]
 
         phi_val = None
+        theta_vline_added = False
 
         for pf in pf_list:
             filename_gx = build_filename(r0, pf, "gx")
@@ -1254,7 +759,11 @@ def plot_principal_K_vs_U(
                 continue
 
             if phi_val is None:
-                phi_val = read_phi_from_metadata(r0, pf, "gx")
+                phi_val = read_phi_from_metadata(
+                    r0,
+                    pf,
+                    "gx",
+                )
 
             data_gx = read_probe(filename_gx)
             data_gy = read_probe(filename_gy)
@@ -1265,8 +774,16 @@ def plot_principal_K_vs_U(
             Uyx = data_gx["Uyx"]
 
             for key in ["Uxx", "Uyy", "Uxy", "Uyx"]:
-                if not np.allclose(data_gx[key], data_gy[key], rtol=1e-6, atol=1e-10):
-                    print(f"[WARNING] {key} differs between gx and gy probes for r0={r0}, pf={pf}")
+                if not np.allclose(
+                    data_gx[key],
+                    data_gy[key],
+                    rtol=1e-6,
+                    atol=1e-10,
+                ):
+                    print(
+                        f"[WARNING] {key} differs between gx and gy "
+                        f"probes for r0={r0}, pf={pf}"
+                    )
 
             gx = data_gx["gx"]
             gy = data_gy["gy"]
@@ -1279,6 +796,23 @@ def plot_principal_K_vs_U(
             xvals = data_gx[x_components[x_component]]
             npts = len(xvals)
             markevery = max(1, npts // 8)
+
+            if not theta_vline_added and len(xvals) > 0:
+                if np.nanmin(xvals) <= 0.0 <= np.nanmax(xvals):
+                    theta_x_ref = 0.0
+                else:
+                    theta_x_ref = xvals[0]
+
+                theta_ax.axvline(
+                    x=theta_x_ref,
+                    color=colors["theta"],
+                    linestyle="--",
+                    linewidth=2.0,
+                    alpha=1.0,
+                    zorder=0,
+                )
+
+                theta_vline_added = True
 
             K_list = []
             F_list = []
@@ -1304,48 +838,57 @@ def plot_principal_K_vs_U(
                     )
                 )
 
-            k1, k2, theta = principal_quantities(K_list)
+            K1, K2, theta = principal_quantities(K_list)
 
-            k1_0 = k1[0]
-            k2_0 = k2[0]
+            K1_0 = K1[0]
+            K2_0 = K2[0]
 
-            if abs(k1_0) < eps:
-                raise ValueError(f"k1_0 is too small for r0={r0}, pf={pf}")
+            if abs(K1_0) < eps:
+                raise ValueError(
+                    f"K1_0 is too small for r0={r0}, pf={pf}"
+                )
 
-            if abs(k2_0) < eps:
-                raise ValueError(f"k2_0 is too small for r0={r0}, pf={pf}")
+            if abs(K2_0) < eps:
+                raise ValueError(
+                    f"K2_0 is too small for r0={r0}, pf={pf}"
+                )
 
             eig_ax.plot(
                 xvals,
-                k1 / k1_0,
-                color=colors["k1"],
+                K1 / K1_0,
+                color=colors["K1"],
                 linestyle="--",
                 linewidth=2.0,
-                marker=markers["k1"],
+                marker=markers["K1"],
                 markersize=4.8,
                 markerfacecolor="white",
-                markeredgecolor=colors["k1"],
+                markeredgecolor=colors["K1"],
                 markeredgewidth=1.0,
                 markevery=markevery,
             )
 
             eig_ax.plot(
                 xvals,
-                k2 / k2_0,
-                color=colors["k2"],
+                K2 / K2_0,
+                color=colors["K2"],
                 linestyle="--",
                 linewidth=2.0,
-                marker=markers["k2"],
+                marker=markers["K2"],
                 markersize=4.8,
                 markerfacecolor="white",
-                markeredgecolor=colors["k2"],
+                markeredgecolor=colors["K2"],
                 markeredgewidth=1.0,
                 markevery=markevery,
             )
+
+            theta_plot = theta.copy()
+
+            if len(theta_plot) > 0:
+                theta_plot[0] = np.nan
 
             theta_ax.plot(
                 xvals,
-                theta,
+                theta_plot,
                 color=colors["theta"],
                 linestyle="--",
                 linewidth=2.0,
@@ -1357,7 +900,9 @@ def plot_principal_K_vs_U(
                 markevery=markevery,
             )
 
-            all_theta_values.extend(theta[np.isfinite(theta)].tolist())
+            all_theta_values.extend(
+                theta_plot[np.isfinite(theta_plot)].tolist()
+            )
 
             if add_prediction:
                 K0 = K_list[0]
@@ -1368,76 +913,136 @@ def plot_principal_K_vs_U(
                     J = float(np.linalg.det(F))
 
                     if abs(J) < 1e-14:
-                        K_pred_list.append(np.full((2, 2), np.nan))
+                        K_pred_list.append(
+                            np.full((2, 2), np.nan)
+                        )
                         continue
 
                     try:
                         Finv = np.linalg.inv(F)
                     except np.linalg.LinAlgError:
-                        K_pred_list.append(np.full((2, 2), np.nan))
+                        K_pred_list.append(
+                            np.full((2, 2), np.nan)
+                        )
                         continue
 
-                    K_pred_list.append(J * (Finv @ K0 @ Finv.T))
+                    K_pred_list.append(
+                        J * (Finv @ K0 @ Finv.T)
+                    )
 
-                k1_pred, k2_pred, theta_pred = principal_quantities(K_pred_list)
+                K1_pred, K2_pred, theta_pred = principal_quantities(
+                    K_pred_list
+                )
 
                 eig_ax.plot(
                     xvals,
-                    k1_pred / k1_0,
-                    color=colors["k1"],
+                    K1_pred / K1_0,
+                    color=colors["K1"],
                     linestyle="-",
                     linewidth=2.0,
                 )
 
                 eig_ax.plot(
                     xvals,
-                    k2_pred / k2_0,
-                    color=colors["k2"],
+                    K2_pred / K2_0,
+                    color=colors["K2"],
                     linestyle="-",
                     linewidth=2.0,
                 )
+
+                theta_pred_plot = theta_pred.copy()
+
+                if len(theta_pred_plot) > 0:
+                    theta_pred_plot[0] = np.nan
 
                 theta_ax.plot(
                     xvals,
-                    theta_pred,
+                    theta_pred_plot,
                     color=colors["theta"],
                     linestyle="-",
                     linewidth=2.0,
                 )
 
-                all_theta_values.extend(theta_pred[np.isfinite(theta_pred)].tolist())
+                all_theta_values.extend(
+                    theta_pred_plot[
+                        np.isfinite(theta_pred_plot)
+                    ].tolist()
+                )
 
             asym = []
+
             for K in K_list:
                 denom = np.linalg.norm(K, ord="fro") + eps
-                asym.append(np.linalg.norm(K - K.T, ord="fro") / denom)
+                asym.append(
+                    np.linalg.norm(K - K.T, ord="fro") / denom
+                )
 
             print(f"r0 = {r0}, pf = {pf}")
-            print(f"k1_0 = {k1_0}")
-            print(f"k2_0 = {k2_0}")
+            print(f"K1_0 = {K1_0}")
+            print(f"K2_0 = {K2_0}")
             print(f"max asymmetry = {np.nanmax(asym)}")
 
+        phi_values_by_column.append(phi_val)
+
         if phi_val is not None:
-            eig_ax.set_title(rf"$\tilde{{\Phi}}_{{g0}} = {phi_val:.2f}$", fontsize=13)
+            eig_ax.set_title(
+                rf"$\tilde{{\Phi}}_{{g0}} = {phi_val:.2f}$"
+            )
         else:
-            eig_ax.set_title(rf"$r_0={r0}$", fontsize=13)
+            eig_ax.set_title(
+                rf"$r_0={r0}$"
+            )
 
         eig_ax.grid(False)
         theta_ax.grid(False)
 
-        eig_ax.tick_params(axis="x", labelbottom=False)
-        eig_ax.tick_params(axis="y", labelsize=11)
+        eig_ax.tick_params(
+            axis="x",
+            labelbottom=False,
+        )
 
-        theta_ax.set_xlabel(rf"$U_{{{x_component.upper()}}}$", fontsize=13)
-        theta_ax.tick_params(axis="x", labelsize=11)
-        theta_ax.tick_params(axis="y", labelsize=11)
+        eig_ax.tick_params(
+            axis="y",
+            labelsize=11,
+        )
+
+        theta_ax.set_xlabel(
+            x_labels[x_component]
+        )
+
+        theta_ax.tick_params(
+            axis="x",
+            labelsize=11,
+        )
+
+        theta_ax.tick_params(
+            axis="y",
+            labelsize=11,
+        )
 
         if i_r0 > 0:
-            eig_ax.tick_params(axis="y", left=False, labelleft=False)
-            theta_ax.tick_params(axis="y", left=False, labelleft=False)
+            eig_ax.tick_params(
+                axis="y",
+                left=False,
+                labelleft=False,
+            )
 
-        xdmf_file = build_xdmf_filename(r0, stream_pf, stream_probe)
-        cf_last = plot_stream_subplot(stream_ax, xdmf_file)
+            theta_ax.tick_params(
+                axis="y",
+                left=False,
+                labelleft=False,
+            )
+
+        xdmf_file = build_xdmf_filename(
+            r0,
+            stream_pf,
+            stream_probe,
+        )
+
+        cf_last = plot_stream_subplot(
+            stream_ax,
+            xdmf_file,
+        )
 
     eig_ymins = []
     eig_ymaxs = []
@@ -1459,52 +1064,94 @@ def plot_principal_K_vs_U(
         for ax in eig_axes:
             ax.set_ylim(ymin, ymax)
 
+    theta_valid = [
+        value
+        for value in all_theta_values
+        if np.isfinite(value)
+    ]
+
     if theta_in_degrees:
-        if all_theta_values:
-            theta_min = min(v for v in all_theta_values if np.isfinite(v))
-            theta_max = max(v for v in all_theta_values if np.isfinite(v))
-            theta_low = min(-100.0, theta_min - 5.0)
-            theta_high = max(100.0, theta_max + 5.0)
+        if theta_valid:
+            theta_min = min(theta_valid)
+            theta_max = max(theta_valid)
+            dtheta = theta_max - theta_min
+
+            if dtheta < 1e-8:
+                pad = 2.0
+            else:
+                pad = max(2.0, 0.15 * dtheta)
+
+            theta_low = theta_min - pad
+            theta_high = theta_max + pad
         else:
-            theta_low = -100.0
-            theta_high = 100.0
+            theta_low = -5.0
+            theta_high = 5.0
 
         for ax in theta_axes:
             ax.set_ylim(theta_low, theta_high)
-            ticks = [-90, 0, 90]
-            ax.set_yticks(ticks)
+            ax.yaxis.set_major_locator(
+                MaxNLocator(nbins=4)
+            )
+
     else:
-        if all_theta_values:
-            theta_min = min(v for v in all_theta_values if np.isfinite(v))
-            theta_max = max(v for v in all_theta_values if np.isfinite(v))
-            theta_low = min(-0.5 * np.pi - np.deg2rad(5.0), theta_min - np.deg2rad(5.0))
-            theta_high = max(0.5 * np.pi + np.deg2rad(5.0), theta_max + np.deg2rad(5.0))
+        if theta_valid:
+            theta_min = min(theta_valid)
+            theta_max = max(theta_valid)
+            dtheta = theta_max - theta_min
+
+            if dtheta < 1e-8:
+                pad = np.deg2rad(2.0)
+            else:
+                pad = max(
+                    np.deg2rad(2.0),
+                    0.15 * dtheta,
+                )
+
+            theta_low = theta_min - pad
+            theta_high = theta_max + pad
         else:
-            theta_low = -0.5 * np.pi - np.deg2rad(5.0)
-            theta_high = 0.5 * np.pi + np.deg2rad(5.0)
+            theta_low = -np.deg2rad(5.0)
+            theta_high = np.deg2rad(5.0)
 
         for ax in theta_axes:
             ax.set_ylim(theta_low, theta_high)
-            ax.set_yticks([-0.5 * np.pi, 0.0, 0.5 * np.pi])
-            ax.set_yticklabels([r"$-\pi/2$", r"$0$", r"$\pi/2$"])
+            ax.yaxis.set_major_locator(
+                MaxNLocator(nbins=4)
+            )
 
-    eig_axes[0].set_ylabel(r"$k_i/k_{i,0}$", fontsize=13, labelpad=4)
-    theta_axes[0].set_ylabel(r"$\theta$ (deg)" if theta_in_degrees else r"$\theta$ (rad)", fontsize=13, labelpad=4)
+    eig_axes[0].set_ylabel(
+        r"$K_i/K_{i,0}$",
+        labelpad=4,
+    )
 
-    eig_axes[0].yaxis.set_label_coords(-0.13, 0.5)
-    theta_axes[0].yaxis.set_label_coords(-0.13, 0.5)
+    theta_axes[0].set_ylabel(
+        r"$\theta$ (deg)"
+        if theta_in_degrees
+        else r"$\theta$ (rad)",
+        labelpad=4,
+    )
+
+    eig_axes[0].yaxis.set_label_coords(
+        -0.15,
+        0.5,
+    )
+
+    theta_axes[0].yaxis.set_label_coords(
+        -0.18,
+        0.5,
+    )
 
     legend_handles = [
         Line2D(
             [0],
             [0],
-            color=colors["k1"],
+            color=colors["K1"],
             linestyle="--",
             linewidth=2.0,
-            marker=markers["k1"],
+            marker=markers["K1"],
             markerfacecolor="white",
-            markeredgecolor=colors["k1"],
-            label=r"$k_1/k_{1,0}$",
+            markeredgecolor=colors["K1"],
+            label=r"$K_1/K_{1,0}$",
         ),
     ]
 
@@ -1513,10 +1160,10 @@ def plot_principal_K_vs_U(
             Line2D(
                 [0],
                 [0],
-                color=colors["k1"],
+                color=colors["K1"],
                 linestyle="-",
                 linewidth=2.0,
-                label=r"$k_1^{pred}/k_{1,0}$",
+                label=r"$K_1^{kin}/K_{1,0}$",
             )
         )
 
@@ -1524,13 +1171,13 @@ def plot_principal_K_vs_U(
         Line2D(
             [0],
             [0],
-            color=colors["k2"],
+            color=colors["K2"],
             linestyle="--",
             linewidth=2.0,
-            marker=markers["k2"],
+            marker=markers["K2"],
             markerfacecolor="white",
-            markeredgecolor=colors["k2"],
-            label=r"$k_2/k_{2,0}$",
+            markeredgecolor=colors["K2"],
+            label=r"$K_2/K_{2,0}$",
         )
     )
 
@@ -1539,10 +1186,10 @@ def plot_principal_K_vs_U(
             Line2D(
                 [0],
                 [0],
-                color=colors["k2"],
+                color=colors["K2"],
                 linestyle="-",
                 linewidth=2.0,
-                label=r"$k_2^{pred}/k_{2,0}$",
+                label=r"$K_2^{kin}/K_{2,0}$",
             )
         )
 
@@ -1568,32 +1215,58 @@ def plot_principal_K_vs_U(
                 color=colors["theta"],
                 linestyle="-",
                 linewidth=2.0,
-                label=r"$\theta^{pred}$",
+                label=r"$\theta^{kin}$",
             )
         )
+
+    legend_handles.append(
+        Line2D(
+            [0],
+            [0],
+            color=colors["theta"],
+            linestyle="--",
+            linewidth=2.0,
+            label=r"$\theta$ undefined at reference",
+        )
+    )
 
     fig.legend(
         handles=legend_handles,
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.965),
-        ncol=len(legend_handles),
-        fontsize=10,
+        bbox_to_anchor=(0.5, 1.02),
+        ncol=min(len(legend_handles), 4),
         frameon=False,
         handlelength=2.2,
         columnspacing=1.2,
+        labelspacing=0.7,
     )
 
-    plt.tight_layout(rect=(0.055, 0.10, 1.0, 0.93))
+    plt.tight_layout(
+        rect=(0.055, 0.17, 1.0, 0.89)
+    )
+
+    fig.canvas.draw()
+
+    stream_positions = [
+        ax.get_position()
+        for ax in stream_axes
+    ]
 
     if add_stream_colorbar and cf_last is not None:
-        from matplotlib.ticker import FuncFormatter
+        left = min(
+            pos.x0
+            for pos in stream_positions
+        )
 
-        fig.canvas.draw()
+        bottom = min(
+            pos.y0
+            for pos in stream_positions
+        )
 
-        stream_positions = [ax.get_position() for ax in stream_axes]
-        left = min(pos.x0 for pos in stream_positions)
-        bottom = min(pos.y0 for pos in stream_positions)
-        top = max(pos.y1 for pos in stream_positions)
+        top = max(
+            pos.y1
+            for pos in stream_positions
+        )
 
         cbar_width = 0.012
         cbar_pad = 0.050
@@ -1616,17 +1289,79 @@ def plot_principal_K_vs_U(
         def sci_fmt(x, pos):
             if abs(x) < 1e-14:
                 return "0"
+
             s = f"{x:.1e}"
             s = s.replace("e-0", "e-")
             s = s.replace("e+0", "e")
             s = s.replace("e+", "e")
+
             return s
 
-        cbar.ax.yaxis.set_major_formatter(FuncFormatter(sci_fmt))
-        cbar.ax.tick_params(labelsize=9)
-        cbar.set_label(r"$p_\ell$ (kPa)", fontsize=11)
+        cbar.ax.yaxis.set_major_formatter(
+            FuncFormatter(sci_fmt)
+        )
 
-    plt.savefig(save_name, bbox_inches="tight", dpi=300)
+        cbar.ax.tick_params(
+            labelsize=9
+        )
+
+        cbar.set_label(
+            r"$p_\ell$ (kPa)"
+        )
+
+    if len(stream_positions) > 0:
+        first_pos = stream_positions[0]
+        last_pos = stream_positions[-1]
+
+        arrow_y = min(
+            pos.y0
+            for pos in stream_positions
+        ) - 0.055
+
+        arrow_x0 = first_pos.x0
+        arrow_x1 = last_pos.x1
+
+        porosity_arrow = FancyArrowPatch(
+            (arrow_x0, arrow_y),
+            (arrow_x1, arrow_y),
+            transform=fig.transFigure,
+            arrowstyle="->",
+            mutation_scale=15,
+            linewidth=1.5,
+            color="black",
+            clip_on=False,
+        )
+
+        fig.add_artist(porosity_arrow)
+
+        for ax, phi_value in zip(
+            stream_axes,
+            phi_values_by_column,
+        ):
+            pos = ax.get_position()
+            x_center = 0.5 * (pos.x0 + pos.x1)
+
+            fig.text(
+                x_center,
+                arrow_y + 0.010,
+                rf"${format_phi_value(phi_value)}$",
+                ha="center",
+                va="bottom",
+            )
+
+        fig.text(
+            0.5 * (arrow_x0 + arrow_x1),
+            arrow_y - 0.030,
+            r"$\tilde{\Phi}_{g0}$",
+            ha="center",
+            va="top",
+        )
+
+    plt.savefig(
+        save_name,
+        bbox_inches="tight",
+        dpi=300,
+    )
 
     if show_plot:
         plt.show()
@@ -1634,6 +1369,7 @@ def plot_principal_K_vs_U(
     plt.close()
 
     print(f"Saved: {save_name}")
+
 
 
 def plot_gas_pressure_loading_summary(
@@ -1646,7 +1382,7 @@ def plot_gas_pressure_loading_summary(
     phi=None,
     slice_start=5,
     eps=1e-12,
-    save_name="plots/Figure6_gas_loading.png",
+    save_name="plots/Figure8_pg_compare.png",
     show_plot=False,
     stream_probe="gx",
     stream_density=0.8,
@@ -1655,13 +1391,10 @@ def plot_gas_pressure_loading_summary(
     add_stream_colorbar=True,
     theta_lift_threshold_deg=-85.0,
 ):
-    import os
-    import json
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import matplotlib.tri as mtri
-    import pyvista as pv
-    from matplotlib.lines import Line2D
+    def fmt_pg(x):
+        if abs(float(x)) < 1e-14:
+            return "0"
+        return f"{float(x):.3g}"
 
     os.makedirs(os.path.dirname(save_name) or ".", exist_ok=True)
 
@@ -1678,15 +1411,15 @@ def plot_gas_pressure_loading_summary(
     }
 
     mode_to_xlabel = {
-        "stretch-x": r"$U_{XX}$",
-        "volumic": r"$U_{XX}=U_{YY}$",
-        "shear": r"$U_{XY}$",
+        "stretch-x": r"$E_x$",
+        "volumic": r"$E_x=E_y$",
+        "shear": r"$E_{xy}$",
     }
 
     mode_to_label = {
-        "stretch-x": r"Stretch $x$",
-        "volumic": r"Volumetric stretch",
-        "shear": r"Simple shear",
+        "stretch-x": r"Uniaxial loading",
+        "volumic": r"Pure volumetric loading",
+        "shear": r"Simple shear loading",
     }
 
     colors = {
@@ -1695,14 +1428,14 @@ def plot_gas_pressure_loading_summary(
     }
 
     markers = {
-        "k1": "o",
-        "k2": "s",
+        "K1": "o",
+        "K2": "s",
         "theta": "^",
     }
 
     linestyles = {
-        "k1": "-",
-        "k2": "--",
+        "K1": "-",
+        "K2": "--",
         "theta": "-.",
     }
 
@@ -1832,8 +1565,8 @@ def plot_gas_pressure_loading_summary(
         return theta
 
     def principal_quantities(K_list):
-        k1 = []
-        k2 = []
+        K1 = []
+        K2 = []
         theta = []
 
         for K in K_list:
@@ -1851,17 +1584,17 @@ def plot_gas_pressure_loading_summary(
 
             angle = 0.5 * np.arctan2(2.0 * b, a - c)
 
-            k1.append(lam1)
-            k2.append(lam2)
+            K1.append(lam1)
+            K2.append(lam2)
             theta.append(angle)
 
-        k1 = np.asarray(k1, dtype=float)
-        k2 = np.asarray(k2, dtype=float)
+        K1 = np.asarray(K1, dtype=float)
+        K2 = np.asarray(K2, dtype=float)
         theta = np.rad2deg(np.asarray(theta, dtype=float))
         theta = continuous_axis_angle_deg(theta)
         theta = lift_negative_vertical_deg(theta)
 
-        return k1, k2, theta
+        return K1, K2, theta
 
     def make_xvals(mode, U):
         return U[mode_to_xkey[mode]]
@@ -2130,7 +1863,7 @@ def plot_gas_pressure_loading_summary(
             Y,
             P,
             levels=60,
-            cmap="inferno",
+            cmap="coolwarm",
             alpha=0.65,
             zorder=2,
         )
@@ -2257,39 +1990,41 @@ def plot_gas_pressure_loading_summary(
         figsize=(22.0, 3.25 * n_rows),
         squeeze=False,
         gridspec_kw={
-            "width_ratios": [1.15, 0.95, 1.00, 1.00, 1.00, 1.00],
+            "width_ratios": [1.15, 0.95, 1.00, 1.00, 1, 0.9],
             "wspace": 0.30,
             "hspace": 0.36,
         },
     )
 
     cf_last = None
-    all_k_values = []
-    all_theta_values = []
+    all_K_values = []
     phi_val = None
 
     for i_mode, mode in enumerate(mode_list):
         if mode not in mode_to_xkey:
             raise ValueError(f"Unknown mode: {mode}")
 
-        ax_k = axes[i_mode, 0]
+        ax_K = axes[i_mode, 0]
         ax_theta = axes[i_mode, 1]
         ax_dist_gx = axes[i_mode, 2]
         ax_dist_gy = axes[i_mode, 3]
         ax_pf0 = axes[i_mode, 4]
         ax_pf1 = axes[i_mode, 5]
 
+        local_theta_values = []
+        theta_vline_added = False
+
         ref_K_list, ref_U = read_K_and_U(mode, pf_list[0])
-        ref_k1, ref_k2, ref_theta = principal_quantities(ref_K_list)
+        ref_K1, ref_K2, ref_theta = principal_quantities(ref_K_list)
 
-        k1_ref = ref_k1[0]
-        k2_ref = ref_k2[0]
+        K1_ref = ref_K1[0]
+        K2_ref = ref_K2[0]
 
-        if abs(k1_ref) < eps:
-            raise ValueError(f"k1_ref is too small for mode={mode}, r0={r0}.")
+        if abs(K1_ref) < eps:
+            raise ValueError(f"K1_ref is too small for mode={mode}, r0={r0}.")
 
-        if abs(k2_ref) < eps:
-            raise ValueError(f"k2_ref is too small for mode={mode}, r0={r0}.")
+        if abs(K2_ref) < eps:
+            raise ValueError(f"K2_ref is too small for mode={mode}, r0={r0}.")
 
         for i_pf, pf in enumerate(pf_list):
             if phi_val is None:
@@ -2297,18 +2032,18 @@ def plot_gas_pressure_loading_summary(
 
             K_list, U = read_K_and_U(mode, pf)
             xvals = make_xvals(mode, U)
-            k1, k2, theta = principal_quantities(K_list)
+            K1, K2, theta = principal_quantities(K_list)
 
             markevery = max(1, len(xvals) // 7)
             curve_color = colors["pg0"] if i_pf == 0 else colors["pg1"]
 
-            ax_k.plot(
+            ax_K.plot(
                 xvals,
-                k1 / k1_ref,
+                K1 / K1_ref,
                 color=curve_color,
-                linestyle=linestyles["k1"],
+                linestyle=linestyles["K1"],
                 linewidth=2.0,
-                marker=markers["k1"],
+                marker=markers["K1"],
                 markersize=4.5,
                 markerfacecolor="white",
                 markeredgecolor=curve_color,
@@ -2316,23 +2051,44 @@ def plot_gas_pressure_loading_summary(
                 markevery=markevery,
             )
 
-            ax_k.plot(
+            ax_K.plot(
                 xvals,
-                k2 / k2_ref,
+                K2 / K2_ref,
                 color=curve_color,
-                linestyle=linestyles["k2"],
+                linestyle=linestyles["K2"],
                 linewidth=2.0,
-                marker=markers["k2"],
+                marker=markers["K2"],
                 markersize=4.5,
                 markerfacecolor="white",
                 markeredgecolor=curve_color,
                 markeredgewidth=1.0,
                 markevery=markevery,
             )
+
+            theta_plot = theta.copy()
+            if len(theta_plot) > 0:
+                theta_plot[0] = np.nan
+
+            if not theta_vline_added and len(xvals) > 0:
+                if np.nanmin(xvals) <= 0.0 <= np.nanmax(xvals):
+                    theta_x_ref = 0.0
+                else:
+                    theta_x_ref = xvals[0]
+
+                ax_theta.axvline(
+                    x=theta_x_ref,
+                    color="0.55",
+                    linestyle="--",
+                    linewidth=1.1,
+                    alpha=0.9,
+                    zorder=0,
+                )
+
+                theta_vline_added = True
 
             ax_theta.plot(
                 xvals,
-                theta,
+                theta_plot,
                 color=curve_color,
                 linestyle=linestyles["theta"],
                 linewidth=2.0,
@@ -2344,9 +2100,11 @@ def plot_gas_pressure_loading_summary(
                 markevery=markevery,
             )
 
-            all_k_values.extend((k1 / k1_ref)[np.isfinite(k1 / k1_ref)].tolist())
-            all_k_values.extend((k2 / k2_ref)[np.isfinite(k2 / k2_ref)].tolist())
-            all_theta_values.extend(theta[np.isfinite(theta)].tolist())
+            all_K_values.extend((K1 / K1_ref)[np.isfinite(K1 / K1_ref)].tolist())
+            all_K_values.extend((K2 / K2_ref)[np.isfinite(K2 / K2_ref)].tolist())
+
+            theta_valid = theta_plot[np.isfinite(theta_plot)]
+            local_theta_values.extend(theta_valid.tolist())
 
         data_gx_0 = dist_cache[(mode, pf_list[0], "gx")]
         data_gx_1 = dist_cache[(mode, pf_list[1], "gx")]
@@ -2375,23 +2133,38 @@ def plot_gas_pressure_loading_summary(
         cf_last = plot_stream_subplot(ax_pf0, xdmf_pg0)
         cf_last = plot_stream_subplot(ax_pf1, xdmf_pg1)
 
-        #ax_k.set_ylabel(mode_to_label[mode], fontsize=13, labelpad=10)
-        ax_k.tick_params(axis="both", labelsize=10)
+        ax_K.tick_params(axis="both", labelsize=10)
         ax_theta.tick_params(axis="both", labelsize=10)
 
-        ax_k.grid(False)
+        ax_K.grid(False)
         ax_theta.grid(False)
 
-        ax_k.set_xlabel(mode_to_xlabel[mode], fontsize=12)
-        ax_theta.set_xlabel(mode_to_xlabel[mode], fontsize=12)
+        ax_K.set_xlabel(mode_to_xlabel[mode])
+        ax_theta.set_xlabel(mode_to_xlabel[mode])
+
+        if len(local_theta_values) > 0:
+            theta_min = min(local_theta_values)
+            theta_max = max(local_theta_values)
+            dtheta = theta_max - theta_min
+
+            if dtheta < 1e-12:
+                pad = 2.0
+            else:
+                pad = max(2.0, 0.15 * dtheta)
+
+            ax_theta.set_ylim(theta_min - pad, theta_max + pad)
+        else:
+            ax_theta.set_ylim(-5.0, 5.0)
+
+        ax_theta.yaxis.set_major_locator(MaxNLocator(nbins=4))
 
         if i_mode == 0:
-            ax_k.set_title(r"Principal permeabilities", fontsize=13)
-            ax_theta.set_title(r"Principal direction", fontsize=13)
-            ax_dist_gx.set_title(r"$|\mathbf{q}_{\ell}|$ distribution ($g_x$ probe)", fontsize=12)
-            ax_dist_gy.set_title(r"$|\mathbf{q}_{\ell}|$ distribution ($g_y$ probe)", fontsize=12)
-            ax_pf0.set_title(rf"$p_g={pf_list[0]}$", fontsize=13)
-            ax_pf1.set_title(rf"$p_g={pf_list[1]}$", fontsize=13)
+            ax_K.set_title(r"Principal permeabilities")
+            ax_theta.set_title(r"Principal direction")
+            ax_dist_gx.set_title(r"$|\mathbf{q}_{\ell}|$ distribution ($g_x$ probe)")
+            ax_dist_gy.set_title(r"$|\mathbf{q}_{\ell}|$ distribution ($g_y$ probe)")
+            ax_pf0.set_title(rf"$p_g={fmt_pg(pf_list[0])}~\mathrm{{kPa}}$")
+            ax_pf1.set_title(rf"$p_g={fmt_pg(pf_list[1])}~\mathrm{{kPa}}$")
 
         if i_mode == 0:
             ax_dist_gx.legend(
@@ -2401,56 +2174,41 @@ def plot_gas_pressure_loading_summary(
                         [0],
                         color=colors["pg0"],
                         linewidth=2.0,
-                        label=rf"$p_g={pf_list[0]}$",
+                        label=rf"$p_g={pf_list[0]}~\mathrm{{kPa}}$",
                     ),
                     Line2D(
                         [0],
                         [0],
                         color=colors["pg1"],
                         linewidth=2.0,
-                        label=rf"$p_g={pf_list[1]}$",
+                        label=rf"$p_g={pf_list[1]}~\mathrm{{kPa}}$",
                     ),
                 ],
                 loc="upper left",
-                fontsize=8.8,
                 frameon=True,
             )
 
         if i_mode == 0:
-            ax_dist_gx.set_ylabel("Frequency (%)", fontsize=11)
+            ax_dist_gx.set_ylabel("Frequency (%)")
         else:
             ax_dist_gx.set_ylabel("")
 
         ax_dist_gy.set_ylabel("")
 
-    if all_k_values:
-        k_min = min(all_k_values)
-        k_max = max(all_k_values)
-        dk = k_max - k_min
+    if all_K_values:
+        K_min = min(all_K_values)
+        K_max = max(all_K_values)
+        dK = K_max - K_min
 
-        if dk > 0:
-            k_min -= 0.06 * dk
-            k_max += 0.06 * dk
+        if dK > 0:
+            K_min -= 0.06 * dK
+            K_max += 0.06 * dK
 
         for ax in axes[:, 0]:
-            ax.set_ylim(k_min, k_max)
+            ax.set_ylim(K_min, K_max)
 
-    if all_theta_values:
-        theta_min = min(all_theta_values)
-        theta_max = max(all_theta_values)
-        theta_low = min(-95.0, theta_min - 5.0)
-        theta_high = max(95.0, theta_max + 5.0)
-    else:
-        theta_low = -95.0
-        theta_high = 95.0
-
-    for ax in axes[:, 1]:
-        ax.set_ylim(theta_low, theta_high)
-        ax.set_yticks([-90, 0, 90])
-
-    axes[0, 0].set_ylabel(r"$k_i/k_{i,\mathrm{ref}}$", fontsize=13)
-
-    axes[0, 1].set_ylabel(r"$\theta$ (deg)", fontsize=13)
+    axes[0, 0].set_ylabel(r"$K_i/K_{i,\mathrm{ref}}$")
+    axes[0, 1].set_ylabel(r"$\theta$ (deg)")
 
     for i in range(1, n_rows):
         axes[i, 1].set_ylabel("")
@@ -2460,45 +2218,45 @@ def plot_gas_pressure_loading_summary(
             [0],
             [0],
             color=colors["pg0"],
-            linestyle=linestyles["k1"],
+            linestyle=linestyles["K1"],
             linewidth=2.0,
-            marker=markers["k1"],
+            marker=markers["K1"],
             markerfacecolor="white",
             markeredgecolor=colors["pg0"],
-            label=rf"$k_1/k_{{1,\mathrm{{ref}}}},\ p_g={pf_list[0]}$",
+            label=rf"$K_1/K_{{1,\mathrm{{ref}}}},\ p_g={pf_list[0]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
             [0],
             color=colors["pg1"],
-            linestyle=linestyles["k1"],
+            linestyle=linestyles["K1"],
             linewidth=2.0,
-            marker=markers["k1"],
+            marker=markers["K1"],
             markerfacecolor="white",
             markeredgecolor=colors["pg1"],
-            label=rf"$k_1/k_{{1,\mathrm{{ref}}}},\ p_g={pf_list[1]}$",
+            label=rf"$K_1/K_{{1,\mathrm{{ref}}}},\ p_g={pf_list[1]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
             [0],
             color=colors["pg0"],
-            linestyle=linestyles["k2"],
+            linestyle=linestyles["K2"],
             linewidth=2.0,
-            marker=markers["k2"],
+            marker=markers["K2"],
             markerfacecolor="white",
             markeredgecolor=colors["pg0"],
-            label=rf"$k_2/k_{{2,\mathrm{{ref}}}},\ p_g={pf_list[0]}$",
+            label=rf"$K_2/K_{{2,\mathrm{{ref}}}},\ p_g={pf_list[0]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
             [0],
             color=colors["pg1"],
-            linestyle=linestyles["k2"],
+            linestyle=linestyles["K2"],
             linewidth=2.0,
-            marker=markers["k2"],
+            marker=markers["K2"],
             markerfacecolor="white",
             markeredgecolor=colors["pg1"],
-            label=rf"$k_2/k_{{2,\mathrm{{ref}}}},\ p_g={pf_list[1]}$",
+            label=rf"$K_2/K_{{2,\mathrm{{ref}}}},\ p_g={pf_list[1]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
@@ -2509,7 +2267,7 @@ def plot_gas_pressure_loading_summary(
             marker=markers["theta"],
             markerfacecolor="white",
             markeredgecolor=colors["pg0"],
-            label=rf"$\theta,\ p_g={pf_list[0]}$",
+            label=rf"$\theta,\ p_g={pf_list[0]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
@@ -2520,33 +2278,47 @@ def plot_gas_pressure_loading_summary(
             marker=markers["theta"],
             markerfacecolor="white",
             markeredgecolor=colors["pg1"],
-            label=rf"$\theta,\ p_g={pf_list[1]}$",
+            label=rf"$\theta,\ p_g={pf_list[1]}~\mathrm{{kPa}}$",
         ),
     ]
-
 
     fig.legend(
         handles=legend_handles,
         loc="upper center",
         bbox_to_anchor=(0.5, 0.968),
         ncol=3,
-        fontsize=9.3,
         frameon=False,
         handlelength=2.2,
         columnspacing=1.1,
     )
 
-    plt.tight_layout(rect=(0.075, 0.08, 1.0, 0.91))
+    fig.subplots_adjust(
+        left=0.075,
+        right=0.985,
+        bottom=0.10,
+        top=0.84,
+        wspace=0.30,
+        hspace=0.36,
+    )
+
+    shift = -0.055
+
+    for i in range(n_rows):
+        pos = axes[i, 5].get_position()
+        axes[i, 5].set_position([
+            pos.x0 + shift,
+            pos.y0,
+            pos.width,
+            pos.height,
+        ])
 
     if add_stream_colorbar and cf_last is not None:
-        from matplotlib.ticker import FuncFormatter
-
         fig.canvas.draw()
 
         mesh_ax_pos = axes[0, 4].get_position()
 
-        cbar_width = 0.012
-        cbar_pad = 0.025
+        cbar_width = 0.008
+        cbar_pad = 0.035
 
         cax = fig.add_axes(
             [
@@ -2574,7 +2346,7 @@ def plot_gas_pressure_loading_summary(
 
         cbar.ax.yaxis.set_major_formatter(FuncFormatter(sci_fmt))
         cbar.ax.tick_params(labelsize=8)
-        cbar.set_label(r"$p_\ell$ (kPa)", fontsize=10)
+        cbar.set_label(r"$p_\ell$ (kPa)")
 
     plt.savefig(save_name, bbox_inches="tight", dpi=300)
 
@@ -2584,7 +2356,6 @@ def plot_gas_pressure_loading_summary(
     plt.close()
 
     print(f"Saved: {save_name}")
-
 
 def plot_pg_after_stretch_x_summary(
     res_folder="results_multi_pg_after_stretch_x",
@@ -2605,16 +2376,6 @@ def plot_pg_after_stretch_x_summary(
     save_name="plots/pg_after_stretch_x_summary.png",
     show_plot=False,
 ):
-    import os
-    import json
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import matplotlib.tri as mtri
-    import pyvista as pv
-    from matplotlib.lines import Line2D
-    from matplotlib.patches import FancyArrowPatch
-    from matplotlib.ticker import FormatStrFormatter
-
     os.makedirs(os.path.dirname(save_name) or ".", exist_ok=True)
 
     if set(probe_list) != {"gx", "gy"}:
@@ -2753,9 +2514,6 @@ def plot_pg_after_stretch_x_summary(
         data_gy = read_probe(file_gy)
 
         for key in ["pg", "Uxx", "Uyy", "Uxy", "Uyx"]:
-        #     if not np.allclose(data_gx[key], data_gy[key], rtol=1e-8, atol=1e-12):
-        #         raise ValueError(f"{key} differs between gx and gy for r0={r0}, Ex={Ex}")
-        # Maybe be due to the coupled loading, double check later if needed.
             if not np.allclose(data_gx[key], data_gy[key], rtol=1e-5, atol=1e-8):
                 print(f"Warning: {key} differs between gx and gy for r0={r0}, Ex={Ex}")
 
@@ -2779,21 +2537,20 @@ def plot_pg_after_stretch_x_summary(
                 )
             )
 
+        start = max(0, min(slice_start, len(data_gx["pg"]) - 1))
+
         k1, k2, theta = principal_quantities(K_list)
 
-        k1_ref = k1[0]
-        k2_ref = k2[0]
+        k1_ref = k1[start]
+        k2_ref = k2[start]
 
         if abs(k1_ref) < eps or abs(k2_ref) < eps:
             raise ValueError(f"Reference principal permeability too small for r0={r0}, Ex={Ex}")
-
-        start = max(0, min(slice_start, len(data_gx["pg"]) - 1))
 
         return {
             "pg": data_gx["pg"][start:],
             "k1": (k1 / k1_ref)[start:],
             "k2": (k2 / k2_ref)[start:],
-            "theta": theta[start:],
             "phi": read_phi_from_metadata(r0, Ex, "gx"),
         }
 
@@ -2951,7 +2708,7 @@ def plot_pg_after_stretch_x_summary(
             snap["Y"],
             snap["P"],
             levels=np.linspace(vmin, vmax, 60),
-            cmap="inferno",
+            cmap="coolwarm",
             alpha=0.65,
             zorder=2,
         )
@@ -2991,7 +2748,6 @@ def plot_pg_after_stretch_x_summary(
     series_cache = {}
     phi_vals = {}
     all_k = []
-    all_theta = []
 
     for r0 in r0_list:
         for Ex in Ex_list:
@@ -3002,7 +2758,6 @@ def plot_pg_after_stretch_x_summary(
                     phi_vals[r0] = series["phi"]
                 all_k.extend(series["k1"][np.isfinite(series["k1"])].tolist())
                 all_k.extend(series["k2"][np.isfinite(series["k2"])].tolist())
-                all_theta.extend(series["theta"][np.isfinite(series["theta"])].tolist())
             except FileNotFoundError as e:
                 print(f"[WARNING] Missing file for r0={r0}, Ex={Ex}: {e}")
             except Exception as e:
@@ -3039,7 +2794,6 @@ def plot_pg_after_stretch_x_summary(
         common_xlim = (xmin - pad_x, xmax + pad_x)
         common_ylim = (ymin - pad_y, ymax + pad_y)
 
-
         p_all = []
         for s in stream_axes_data:
             P = s["P"]
@@ -3052,7 +2806,6 @@ def plot_pg_after_stretch_x_summary(
 
             if len(vals) > 0:
                 p_all.append(vals)
-
 
         if len(p_all) > 0:
             p_all = np.concatenate(p_all)
@@ -3069,25 +2822,22 @@ def plot_pg_after_stretch_x_summary(
 
     ex_colors = plt.cm.viridis(np.linspace(0.15, 0.9, len(Ex_list)))
 
-    fig = plt.figure(figsize=(17.0, 10.8))
+    fig = plt.figure(figsize=(17.0, 7.8))
     outer = fig.add_gridspec(
-        3,
+        2,
         1,
-        height_ratios=[1.0, 1.0, 1.18],
+        height_ratios=[1.0, 1.22],
         hspace=0.34,
     )
 
     gs_row1 = outer[0].subgridspec(1, len(r0_list), wspace=0.28)
-    gs_row2 = outer[1].subgridspec(1, len(r0_list), wspace=0.28)
-    gs_row3 = outer[2].subgridspec(1, max(1, len(stream_axes_data)), wspace=0.14)
+    gs_row2 = outer[1].subgridspec(1, max(1, len(stream_axes_data)), wspace=0.14)
 
     ax_row1 = [fig.add_subplot(gs_row1[0, i]) for i in range(len(r0_list))]
-    ax_row2 = [fig.add_subplot(gs_row2[0, i]) for i in range(len(r0_list))]
-    ax_row3 = [fig.add_subplot(gs_row3[0, i]) for i in range(max(1, len(stream_axes_data)))]
+    ax_row2 = [fig.add_subplot(gs_row2[0, i]) for i in range(max(1, len(stream_axes_data)))]
 
     for i_r0, r0 in enumerate(r0_list):
         axk = ax_row1[i_r0]
-        axt = ax_row2[i_r0]
 
         for i_Ex, Ex in enumerate(Ex_list):
             if (r0, Ex) not in series_cache:
@@ -3098,7 +2848,6 @@ def plot_pg_after_stretch_x_summary(
             pg = s["pg"]
             k1 = s["k1"]
             k2 = s["k2"]
-            theta = s["theta"]
 
             markevery = max(1, len(pg) // 7)
 
@@ -3114,6 +2863,7 @@ def plot_pg_after_stretch_x_summary(
                 markeredgecolor=color,
                 markeredgewidth=1.0,
                 markevery=markevery,
+                label=r"$K_1$",
             )
 
             axk.plot(
@@ -3128,67 +2878,26 @@ def plot_pg_after_stretch_x_summary(
                 markeredgecolor=color,
                 markeredgewidth=1.0,
                 markevery=markevery,
-            )
-
-            axt.plot(
-                pg,
-                theta,
-                color=color,
-                linestyle="-",
-                linewidth=1.9,
-                marker="^",
-                markersize=4.0,
-                markerfacecolor="white",
-                markeredgecolor=color,
-                markeredgewidth=1.0,
-                markevery=markevery,
+                label=r"$K_2$",
             )
 
         phi_val = phi_vals.get(r0, None)
         if phi_val is None:
-            axk.set_title(rf"$r_0={fmt_disp(r0)}$", fontsize=14)
+            axk.set_title(rf"$r_0={fmt_disp(r0)}$")
         else:
-            axk.set_title(rf"$\tilde{{\Phi}}_{{g0}} = {phi_val:.3f}$", fontsize=14)
+            axk.set_title(rf"$\tilde{{\Phi}}_{{g0}} = {phi_val:.2f}$")
 
-        axk.set_xlabel(r"$p_g$ (kPa)", fontsize=13)
-        axt.set_xlabel(r"$p_g$ (kPa)", fontsize=13)
+        axk.set_xlabel(r"$p_g$ (kPa)")
 
         if i_r0 == 0:
-            axk.set_ylabel(r"$k_i/k_{i,p_g=0}$", fontsize=14)
-            axt.set_ylabel(r"$\theta$ (deg)", fontsize=14)
-        else:
-            axt.set_ylabel("")
+            axk.set_ylabel(r"$K_i/K_{i,p_g=0}$")
 
         axk.grid(False)
-        axt.grid(False)
-
         axk.tick_params(axis="both", labelsize=11)
-        axt.tick_params(axis="both", labelsize=11)
 
-        axt.set_yticks([-90, 0, 90])
 
-    # if len(all_k) > 0:
-    #     ymin = min(all_k)
-    #     ymax = max(all_k)
-    #     dy = ymax - ymin
-    #     if dy > 0:
-    #         ymin -= 0.06 * dy
-    #         ymax += 0.06 * dy
-    #     for ax in ax_row1:
-    #         ax.set_ylim(ymin, ymax)
 
-    if len(all_theta) > 0:
-        ymin = min(all_theta)
-        ymax = max(all_theta)
-        ymin = min(-95.0, ymin - 5.0)
-        ymax = max(95.0, ymax + 5.0)
-        for ax in ax_row2:
-            ax.set_ylim(ymin, ymax)
-    else:
-        for ax in ax_row2:
-            ax.set_ylim(-95.0, 95.0)
-
-    for i, ax in enumerate(ax_row3):
+    for i, ax in enumerate(ax_row2):
         if i < len(stream_axes_data):
             cf_last = plot_snapshot(
                 ax,
@@ -3215,7 +2924,7 @@ def plot_pg_after_stretch_x_summary(
             marker="o",
             markerfacecolor="white",
             markeredgecolor="black",
-            label=r"$k_1$",
+            label=r"$K_1$",
         ),
         Line2D(
             [0], [0],
@@ -3225,37 +2934,26 @@ def plot_pg_after_stretch_x_summary(
             marker="s",
             markerfacecolor="white",
             markeredgecolor="black",
-            label=r"$k_2$",
-        ),
-        Line2D(
-            [0], [0],
-            color="black",
-            linestyle="-",
-            linewidth=1.8,
-            marker="^",
-            markerfacecolor="white",
-            markeredgecolor="black",
-            label=r"$\theta$",
+            label=r"$K_2$",
         ),
     ]
 
     fig.legend(
         handles=ex_handles + style_handles,
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.978),
+        bbox_to_anchor=(0.5, 0.985),
         ncol=len(ex_handles) + len(style_handles),
-        fontsize=11,
         frameon=False,
         handlelength=2.0,
         columnspacing=1.0,
     )
 
-    plt.tight_layout(rect=(0.08, 0.10, 0.985, 0.94))
+    plt.tight_layout(rect=(0.08, 0.08, 0.985, 0.91))
     fig.canvas.draw()
 
     if len(stream_axes_data) > 0 and cf_last is not None:
-        first_ax = ax_row3[0]
-        last_ax = ax_row3[len(stream_axes_data) - 1]
+        first_ax = ax_row2[0]
+        last_ax = ax_row2[len(stream_axes_data) - 1]
 
         first_pos = first_ax.get_position()
         last_pos = last_ax.get_position()
@@ -3272,7 +2970,7 @@ def plot_pg_after_stretch_x_summary(
         )
 
         cbar = fig.colorbar(cf_last, cax=cax, orientation="vertical")
-        cbar.set_label(r"$p_\ell$ (kPa)", fontsize=12)
+        cbar.set_label(r"$p_\ell$ (kPa)")
         cbar.ax.tick_params(labelsize=10)
         cbar.ax.yaxis.set_major_formatter(FormatStrFormatter("%.1e"))
 
@@ -3297,10 +2995,9 @@ def plot_pg_after_stretch_x_summary(
             r"$p_g$ (kPa)",
             ha="center",
             va="top",
-            fontsize=12,
         )
 
-        for ax, pg in zip(ax_row3[:len(stream_axes_data)], stream_pg_vals):
+        for ax, pg in zip(ax_row2[:len(stream_axes_data)], stream_pg_vals):
             pos = ax.get_position()
             xc = 0.5 * (pos.x0 + pos.x1)
             fig.text(
@@ -3309,7 +3006,6 @@ def plot_pg_after_stretch_x_summary(
                 rf"${fmt_disp(pg)}$",
                 ha="center",
                 va="bottom",
-                fontsize=11,
             )
 
     plt.savefig(save_name, bbox_inches="tight", dpi=300)
@@ -3320,4 +3016,1499 @@ def plot_pg_after_stretch_x_summary(
     plt.close()
 
     print(f"Saved: {save_name}")
+
+def plot_figure9_summary(
+    r0_list,
+    cases=None,
+    loading_text=None,
+    res_folder="results_four_loading_cases",
+    prefix="Fig_loading",
+    pg=0.2,
+    r0_to_phi=None,
+    slice_start=5,
+    final_index=-1,
+    eps=1e-12,
+    save_name="plots/Figure9_summary.png",
+    show_plot=False,
+):
+
+    os.makedirs(os.path.dirname(save_name) or ".", exist_ok=True)
+
+    if cases is None:
+        cases = [
+            {
+                "mode": "stretch_x",
+                "label": "uniaxial loading",
+                "pf": 0.0,
+                "use_prediction": True,
+            },
+            {
+                "mode": "volumic",
+                "label": "pure volumetric loading",
+                "pf": 0.0,
+                "use_prediction": True,
+            },
+            {
+                "mode": "simple_shear",
+                "label": "simple shear loading",
+                "pf": 0.0,
+                "use_prediction": True,
+            },
+            {
+                "mode": "gas_pressure",
+                "label": "gas pressure loading",
+                "pf": pg,
+                "use_prediction": True,
+            },
+        ]
+
+    if loading_text is None:
+        loading_text = {
+            "uniaxial loading": r"$E_x=0.3$",
+            "pure volumetric loading": r"$E_x=E_y=0.3$",
+            "simple shear loading": r"$E_{xy}=0.3$",
+            "gas pressure loading": rf"$p_g={pg}~\mathrm{{kPa}}$",
+        }
+
+    colors = {
+        "uniaxial loading": "#0072B2",
+        "pure volumetric loading": "#D55E00",
+        "simple shear loading": "#009E73",
+        "gas pressure loading": "#CC79A7",
+    }
+
+    markers = {
+        "uniaxial loading": "o",
+        "pure volumetric loading": "s",
+        "simple shear loading": "^",
+        "gas pressure loading": "D",
+    }
+
+    def fmt_candidates(x):
+        x = float(x)
+
+        vals = [
+            str(x),
+            f"{x:.6g}",
+            f"{x:.3g}",
+            f"{x:.1f}",
+        ]
+
+        if abs(x) < 1e-14:
+            vals += ["0", "0.0"]
+
+        out = []
+        for v in vals:
+            if v not in out:
+                out.append(v)
+
+        return out
+
+    def build_basename(case, r0, probe):
+        folder = case.get("res_folder", res_folder)
+        case_prefix = case.get("prefix", prefix)
+        mode = case["mode"]
+        pf = case.get("pf", 0.0)
+
+        first = None
+
+        for r0_str in fmt_candidates(r0):
+            for pf_str in fmt_candidates(pf):
+                basename = f"{folder}/{case_prefix}-{mode}-r0={r0_str}-pf={pf_str}-{probe}"
+
+                if first is None:
+                    first = basename
+
+                if os.path.exists(basename + "-qois.dat"):
+                    return basename
+
+        return first
+
+    def read_phi(basename, r0):
+        metadata_file = basename + "-metadata.json"
+
+        if os.path.exists(metadata_file):
+            with open(metadata_file, "r") as f:
+                metadata = json.load(f)
+
+            for key in ["mesh_porosity", "porosity", "phi"]:
+                if key in metadata:
+                    return float(metadata[key])
+
+        if r0_to_phi is not None:
+            return float(r0_to_phi[r0])
+
+        return float(r0)
+
+    def read_probe(filename):
+        qois_vals, names = load_qois(filename)
+
+        data = {
+            "Uxx": np.asarray(get(qois_vals, names, "U_bar_XX")[slice_start:], dtype=float),
+            "Uyy": np.asarray(get(qois_vals, names, "U_bar_YY")[slice_start:], dtype=float),
+            "Uxy": np.asarray(get(qois_vals, names, "U_bar_XY")[slice_start:], dtype=float),
+            "Uyx": np.asarray(get(qois_vals, names, "U_bar_YX")[slice_start:], dtype=float),
+            "Qx": np.asarray(get(qois_vals, names, "Q_l_avg_x")[slice_start:], dtype=float),
+            "Qy": np.asarray(get(qois_vals, names, "Q_l_avg_y")[slice_start:], dtype=float),
+            "gx": np.asarray(get(qois_vals, names, "grad_p_bar_avg_x")[slice_start:], dtype=float),
+            "gy": np.asarray(get(qois_vals, names, "grad_p_bar_avg_y")[slice_start:], dtype=float),
+        }
+
+        npts = len(data["Uxx"])
+
+        for key, val in data.items():
+            if len(val) != npts:
+                raise ValueError(f"Inconsistent length for {key} in {filename}")
+
+        return data
+
+    def read_K_and_F(case, r0):
+        basename_gx = build_basename(case, r0, "gx")
+        basename_gy = build_basename(case, r0, "gy")
+
+        file_gx = basename_gx + "-qois.dat"
+        file_gy = basename_gy + "-qois.dat"
+
+        if not os.path.exists(file_gx):
+            raise FileNotFoundError(file_gx)
+
+        if not os.path.exists(file_gy):
+            raise FileNotFoundError(file_gy)
+
+        data_gx = read_probe(file_gx)
+        data_gy = read_probe(file_gy)
+
+        for key in ["Uxx", "Uyy", "Uxy", "Uyx"]:
+            if not np.allclose(data_gx[key], data_gy[key], rtol=1e-5, atol=1e-8):
+                print(
+                    f"[WARNING] {key} differs between gx and gy "
+                    f"for mode={case['mode']}, r0={r0}"
+                )
+
+        gx = data_gx["gx"]
+        gy = data_gy["gy"]
+
+        Kxx = -data_gx["Qx"] / (gx + eps)
+        Kyx = -data_gx["Qy"] / (gx + eps)
+        Kxy = -data_gy["Qx"] / (gy + eps)
+        Kyy = -data_gy["Qy"] / (gy + eps)
+
+        Uxx = 0.5 * (data_gx["Uxx"] + data_gy["Uxx"])
+        Uyy = 0.5 * (data_gx["Uyy"] + data_gy["Uyy"])
+        Uxy = 0.5 * (data_gx["Uxy"] + data_gy["Uxy"])
+        Uyx = 0.5 * (data_gx["Uyx"] + data_gy["Uyx"])
+
+        K_list = []
+        F_list = []
+
+        for n in range(len(Kxx)):
+            K_list.append(
+                np.array(
+                    [
+                        [Kxx[n], Kxy[n]],
+                        [Kyx[n], Kyy[n]],
+                    ],
+                    dtype=float,
+                )
+            )
+
+            F_list.append(
+                np.array(
+                    [
+                        [1.0 + Uxx[n], Uxy[n]],
+                        [Uyx[n], 1.0 + Uyy[n]],
+                    ],
+                    dtype=float,
+                )
+            )
+
+        phi = read_phi(basename_gx, r0)
+
+        return K_list, F_list, phi
+
+    def compute_indicators(K0, Kf, Ff, use_prediction):
+        C_K = np.trace(Kf) / (np.trace(K0) + eps)
+
+        Ksym = 0.5 * (Kf + Kf.T)
+        eigvals = np.linalg.eigvalsh(Ksym)
+
+        eig_min = np.min(eigvals)
+        eig_max = np.max(eigvals)
+
+        if eig_min <= eps:
+            A_K = np.nan
+        else:
+            A_K = eig_max / eig_min
+
+        if use_prediction:
+            J = float(np.linalg.det(Ff))
+
+            if abs(J) < eps:
+                E_K = np.nan
+            else:
+                Finv = np.linalg.inv(Ff)
+                K_pred = J * (Finv @ K0 @ Finv.T)
+
+                E_K = np.linalg.norm(Kf - K_pred, ord="fro") / (
+                    np.linalg.norm(Kf, ord="fro") + eps
+                )
+        else:
+            E_K = np.nan
+
+        return C_K, A_K, E_K
+
+    rows = []
+
+    for case in cases:
+        label = case["label"]
+        use_prediction = case.get("use_prediction", True)
+
+        for r0 in r0_list:
+            try:
+                K_list, F_list, phi = read_K_and_F(case, r0)
+
+                K0 = K_list[0]
+                Kf = K_list[final_index]
+                Ff = F_list[final_index]
+
+                C_K, A_K, E_K = compute_indicators(
+                    K0=K0,
+                    Kf=Kf,
+                    Ff=Ff,
+                    use_prediction=use_prediction,
+                )
+
+                rows.append(
+                    {
+                        "label": label,
+                        "mode": case["mode"],
+                        "r0": r0,
+                        "phi": phi,
+                        "C_K": C_K,
+                        "A_K": A_K,
+                        "E_K": E_K,
+                    }
+                )
+
+                print(
+                    f"{label}, r0={r0}, phi={phi:.6f}, "
+                    f"C_K={C_K:.6f}, A_K={A_K:.6f}, E_K={E_K:.6f}"
+                )
+
+            except FileNotFoundError as e:
+                print(f"[WARNING] Missing file: {e}")
+
+            except Exception as e:
+                print(f"[WARNING] Failed for {label}, r0={r0}: {e}")
+
+    fig, axes = plt.subplots(1, 3, figsize=(12.5, 3.9))
+
+    plot_settings = [
+        ("C_K", r"$C_K=\mathrm{tr}(\mathbf{K})/\mathrm{tr}(\mathbf{K}_0)$"),
+        ("A_K", r"$A_K=K_{\max}/K_{\min}$"),
+        ("E_K", r"$E_K=\|\mathbf{K}-\mathbf{K}^{kin}\|_F/\|\mathbf{K}\|_F$"),
+    ]
+
+    for ax, (key, ylabel) in zip(axes, plot_settings):
+        for case in cases:
+            label = case["label"]
+            case_rows = [row for row in rows if row["label"] == label]
+
+            if not case_rows:
+                continue
+
+            case_rows = sorted(case_rows, key=lambda row: row["phi"])
+
+            x = np.array([row["phi"] for row in case_rows], dtype=float)
+            y = np.array([row[key] for row in case_rows], dtype=float)
+
+            valid = np.isfinite(y)
+
+            if not np.any(valid):
+                continue
+
+            ax.plot(
+                x[valid],
+                y[valid],
+                color=colors.get(label, "black"),
+                marker=markers.get(label, "o"),
+                markersize=5.5,
+                linewidth=2.0,
+                markerfacecolor="white",
+                markeredgewidth=1.2,
+                label=label,
+            )
+
+        ax.set_xlabel(r"$\tilde{\Phi}_{g0}$", fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.tick_params(axis="both", labelsize=10)
+        ax.grid(False)
+
+    axes[0].axhline(1.0, color="0.5", linewidth=1.0, linestyle="--")
+    axes[1].axhline(1.0, color="0.5", linewidth=1.0, linestyle="--")
+    axes[2].axhline(0.0, color="0.5", linewidth=1.0, linestyle="--")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+
+    legend_labels = []
+
+    for label in labels:
+        if label in loading_text:
+            legend_labels.append(f"{label}, {loading_text[label]}")
+        else:
+            legend_labels.append(label)
+
+    fig.legend(
+        handles,
+        legend_labels,
+        loc="upper center",
+        ncol=2,
+        frameon=False,
+        bbox_to_anchor=(0.51, 0.91),
+    )
+        
+
+    plt.tight_layout(rect=[0.0, 0.0, 1.0, 0.73])
+    plt.savefig(save_name, bbox_inches="tight", dpi=300)
+
+    if show_plot:
+        plt.show()
+
+    plt.close()
+
+    print(f"Saved: {save_name}")
+
+    return rows
+
+
+
+def plot_q_vs_gradp(
+    res_folder="results_gradp_linearity",
+    res_basename_prefix="gradp-linearity",
+    r0_list=(0.2,),
+    pf=0.0,
+    slice_start=0,
+    eps=1e-14,
+    save_name="plots/q_vs_gradp.png",
+    show_plot=False,
+    xdmf_folder=None,
+    xdmf_basename_prefix=None,
+    stream_density=1.0,
+    stream_scale=1.0,
+    stream_grid_n=400,
+    add_stream_colorbar=True,
+):
+    os.makedirs(
+        os.path.dirname(save_name) or ".",
+        exist_ok=True,
+    )
+
+    if xdmf_folder is None:
+        xdmf_folder = res_folder
+
+    if xdmf_basename_prefix is None:
+        xdmf_basename_prefix = res_basename_prefix
+
+    def build_basename(folder, prefix, r0, probe):
+        return (
+            f"{folder}/"
+            f"{prefix}"
+            f"-r0={r0}"
+            f"-pf={pf}"
+            f"-{probe}"
+        )
+
+    def build_qois_filename(r0, probe):
+        return (
+            build_basename(
+                res_folder,
+                res_basename_prefix,
+                r0,
+                probe,
+            )
+            + "-qois.dat"
+        )
+
+    def build_xdmf_filename(r0, probe):
+        return (
+            build_basename(
+                xdmf_folder,
+                xdmf_basename_prefix,
+                r0,
+                probe,
+            )
+            + ".xdmf"
+        )
+
+    def build_metadata_filename(r0, probe):
+        return (
+            build_basename(
+                res_folder,
+                res_basename_prefix,
+                r0,
+                probe,
+            )
+            + "-metadata.json"
+        )
+
+    def read_phi_from_metadata(r0, probe="gx"):
+        metadata_file = build_metadata_filename(
+            r0,
+            probe,
+        )
+
+        if os.path.exists(metadata_file):
+            with open(metadata_file, "r") as f:
+                metadata = json.load(f)
+
+            for key in [
+                "mesh_porosity",
+                "porosity",
+                "phi",
+            ]:
+                if key in metadata:
+                    return float(metadata[key])
+
+        return None
+
+    def read_probe(r0, probe):
+        filename = build_qois_filename(
+            r0,
+            probe,
+        )
+
+        if not os.path.exists(filename):
+            raise FileNotFoundError(filename)
+
+        qois_vals, names = load_qois(filename)
+
+        data = {
+            "gx": np.asarray(
+                get(
+                    qois_vals,
+                    names,
+                    "grad_p_bar_avg_x",
+                )[slice_start:],
+                dtype=float,
+            ),
+            "gy": np.asarray(
+                get(
+                    qois_vals,
+                    names,
+                    "grad_p_bar_avg_y",
+                )[slice_start:],
+                dtype=float,
+            ),
+            "Qx": np.asarray(
+                get(
+                    qois_vals,
+                    names,
+                    "Q_l_avg_x",
+                )[slice_start:],
+                dtype=float,
+            ),
+            "Qy": np.asarray(
+                get(
+                    qois_vals,
+                    names,
+                    "Q_l_avg_y",
+                )[slice_start:],
+                dtype=float,
+            ),
+        }
+
+        npts = len(data["gx"])
+
+        for key, values in data.items():
+            if len(values) != npts:
+                raise ValueError(
+                    f"Inconsistent length for {key} "
+                    f"in {filename}"
+                )
+
+        return data
+
+    def make_valid_triangulation(
+        points,
+        faces,
+        area_tol=1e-14,
+    ):
+        points = np.asarray(
+            points,
+            dtype=float,
+        )
+
+        faces = np.asarray(
+            faces,
+            dtype=int,
+        )
+
+        finite_points = np.all(
+            np.isfinite(points),
+            axis=1,
+        )
+
+        valid_faces = np.all(
+            finite_points[faces],
+            axis=1,
+        )
+
+        faces = faces[valid_faces]
+
+        distinct_vertices = (
+            (faces[:, 0] != faces[:, 1])
+            & (faces[:, 1] != faces[:, 2])
+            & (faces[:, 2] != faces[:, 0])
+        )
+
+        faces = faces[distinct_vertices]
+
+        p0 = points[faces[:, 0]]
+        p1 = points[faces[:, 1]]
+        p2 = points[faces[:, 2]]
+
+        signed_area = 0.5 * (
+            (p1[:, 0] - p0[:, 0])
+            * (p2[:, 1] - p0[:, 1])
+            - (p1[:, 1] - p0[:, 1])
+            * (p2[:, 0] - p0[:, 0])
+        )
+
+        lx = (
+            np.nanmax(points[:, 0])
+            - np.nanmin(points[:, 0])
+        )
+
+        ly = (
+            np.nanmax(points[:, 1])
+            - np.nanmin(points[:, 1])
+        )
+
+        scale = max(
+            lx * ly,
+            1.0,
+        )
+
+        valid_area = (
+            np.isfinite(signed_area)
+            & (
+                np.abs(signed_area)
+                > area_tol * scale
+            )
+        )
+
+        faces = faces[valid_area]
+        signed_area = signed_area[valid_area]
+
+        inverted = signed_area < 0.0
+
+        faces[inverted] = (
+            faces[inverted][:, [0, 2, 1]]
+        )
+
+        if len(faces) == 0:
+            raise ValueError(
+                "No valid triangles remain"
+            )
+
+        return mtri.Triangulation(
+            points[:, 0],
+            points[:, 1],
+            triangles=faces,
+        )
+
+    def extract_triangular_faces(surface):
+        faces_raw = np.asarray(
+            surface.faces,
+            dtype=int,
+        )
+
+        if len(faces_raw) % 4 != 0:
+            raise ValueError(
+                "Unexpected PyVista face array"
+            )
+
+        faces_all = faces_raw.reshape(
+            -1,
+            4,
+        )
+
+        if not np.all(
+            faces_all[:, 0] == 3
+        ):
+            raise ValueError(
+                "Non-triangular faces found"
+            )
+
+        return faces_all[:, 1:4]
+
+    def read_stream_data(xdmf_file):
+        if not os.path.exists(xdmf_file):
+            return None
+
+        reader = pv.get_reader(
+            xdmf_file
+        )
+
+        if (
+            hasattr(
+                reader,
+                "number_time_points",
+            )
+            and reader.number_time_points > 0
+        ):
+            reader.set_active_time_point(0)
+            mesh0 = reader.read()
+
+            reader.set_active_time_point(
+                reader.number_time_points - 1
+            )
+            meshf = reader.read()
+        else:
+            mesh0 = reader.read()
+            meshf = mesh0.copy()
+
+        mesh0 = (
+            mesh0
+            .cell_data_to_point_data()
+        )
+
+        meshf = (
+            meshf
+            .cell_data_to_point_data()
+        )
+
+        surf0 = (
+            mesh0
+            .extract_surface()
+            .triangulate()
+            .clean(
+                tolerance=1e-10,
+                absolute=False,
+            )
+        )
+
+        warped = meshf.warp_by_vector(
+            "U_tot",
+            factor=stream_scale,
+        )
+
+        surf = (
+            warped
+            .extract_surface()
+            .triangulate()
+            .clean(
+                tolerance=1e-10,
+                absolute=False,
+            )
+        )
+
+        pts0 = np.asarray(
+            surf0.points[:, :2],
+            dtype=float,
+        )
+
+        pts = np.asarray(
+            surf.points[:, :2],
+            dtype=float,
+        )
+
+        faces0 = extract_triangular_faces(
+            surf0
+        )
+
+        faces = extract_triangular_faces(
+            surf
+        )
+
+        center0 = np.array(
+            [
+                0.5
+                * (
+                    pts0[:, 0].min()
+                    + pts0[:, 0].max()
+                ),
+                0.5
+                * (
+                    pts0[:, 1].min()
+                    + pts0[:, 1].max()
+                ),
+            ]
+        )
+
+        center = np.array(
+            [
+                0.5
+                * (
+                    pts[:, 0].min()
+                    + pts[:, 0].max()
+                ),
+                0.5
+                * (
+                    pts[:, 1].min()
+                    + pts[:, 1].max()
+                ),
+            ]
+        )
+
+        pts0_shift = (
+            pts0
+            + center
+            - center0
+        )
+
+        triang0 = make_valid_triangulation(
+            pts0_shift,
+            faces0,
+        )
+
+        triang = make_valid_triangulation(
+            pts,
+            faces,
+        )
+
+        p = np.asarray(
+            surf.point_data["pl_tot"],
+            dtype=float,
+        )
+
+        q = np.asarray(
+            surf.point_data["q_l"][:, :2],
+            dtype=float,
+        )
+
+        qx = q[:, 0]
+        qy = q[:, 1]
+
+        interp_p = (
+            mtri.LinearTriInterpolator(
+                triang,
+                p,
+            )
+        )
+
+        interp_qx = (
+            mtri.LinearTriInterpolator(
+                triang,
+                qx,
+            )
+        )
+
+        interp_qy = (
+            mtri.LinearTriInterpolator(
+                triang,
+                qy,
+            )
+        )
+
+        xi = np.linspace(
+            pts[:, 0].min(),
+            pts[:, 0].max(),
+            stream_grid_n,
+        )
+
+        yi = np.linspace(
+            pts[:, 1].min(),
+            pts[:, 1].max(),
+            stream_grid_n,
+        )
+
+        X, Y = np.meshgrid(
+            xi,
+            yi,
+        )
+
+        P = interp_p(
+            X,
+            Y,
+        )
+
+        QX = interp_qx(
+            X,
+            Y,
+        )
+
+        QY = interp_qy(
+            X,
+            Y,
+        )
+
+        try:
+            finder = (
+                triang.get_trifinder()
+            )
+
+            inside = (
+                finder(X, Y) != -1
+            )
+        except Exception:
+            inside = ~np.ma.getmaskarray(P)
+
+        P_mask = (
+            np.ma.getmaskarray(P)
+            | (~inside)
+        )
+
+        QX_mask = (
+            np.ma.getmaskarray(QX)
+            | (~inside)
+        )
+
+        QY_mask = (
+            np.ma.getmaskarray(QY)
+            | (~inside)
+        )
+
+        P = np.ma.array(
+            P,
+            mask=P_mask,
+        )
+
+        QX = np.ma.array(
+            QX,
+            mask=QX_mask,
+        )
+
+        QY = np.ma.array(
+            QY,
+            mask=QY_mask,
+        )
+
+        xmin = min(
+            pts0_shift[:, 0].min(),
+            pts[:, 0].min(),
+        )
+
+        xmax = max(
+            pts0_shift[:, 0].max(),
+            pts[:, 0].max(),
+        )
+
+        ymin = min(
+            pts0_shift[:, 1].min(),
+            pts[:, 1].min(),
+        )
+
+        ymax = max(
+            pts0_shift[:, 1].max(),
+            pts[:, 1].max(),
+        )
+
+        return {
+            "triang0": triang0,
+            "pts0_shift": pts0_shift,
+            "X": X,
+            "Y": Y,
+            "P": P,
+            "QX": QX,
+            "QY": QY,
+            "xmin": xmin,
+            "xmax": xmax,
+            "ymin": ymin,
+            "ymax": ymax,
+        }
+
+    def plot_stream_subplot(
+        ax,
+        stream_data,
+        p_levels,
+        xlim,
+        ylim,
+    ):
+        if stream_data is None:
+            ax.text(
+                0.5,
+                0.5,
+                "missing xdmf",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+            return None
+
+        ax.tripcolor(
+            stream_data["triang0"],
+            np.ones(
+                len(
+                    stream_data[
+                        "pts0_shift"
+                    ]
+                )
+            ),
+            shading="gouraud",
+            cmap="Greys",
+            vmin=0.0,
+            vmax=2.0,
+            alpha=0.72,
+            edgecolors="none",
+            zorder=0,
+        )
+
+        ax.triplot(
+            stream_data["triang0"],
+            color="0.72",
+            linewidth=0.30,
+            alpha=0.40,
+            zorder=1,
+        )
+
+        cf = ax.contourf(
+            stream_data["X"],
+            stream_data["Y"],
+            stream_data["P"],
+            levels=p_levels,
+            cmap="coolwarm",
+            alpha=0.65,
+            zorder=2,
+        )
+
+        stream_kwargs = {
+            "density": stream_density,
+            "color": "#66F7FF",
+            "linewidth": 1.15,
+            "arrowsize": 1.15,
+            "arrowstyle": "->",
+            "minlength": 0.02,
+            "maxlength": 10.0,
+            "integration_direction": "both",
+        }
+
+        try:
+            sp = ax.streamplot(
+                stream_data["X"][0, :],
+                stream_data["Y"][:, 0],
+                stream_data["QX"],
+                stream_data["QY"],
+                broken_streamlines=False,
+                **stream_kwargs,
+            )
+        except TypeError:
+            sp = ax.streamplot(
+                stream_data["X"][0, :],
+                stream_data["Y"][:, 0],
+                stream_data["QX"],
+                stream_data["QY"],
+                **stream_kwargs,
+            )
+
+        sp.lines.set_zorder(4)
+        sp.arrows.set_zorder(5)
+
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
+
+        ax.set_aspect(
+            "equal",
+            adjustable="box",
+        )
+
+        ax.set_anchor("C")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.margins(0)
+
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+        return cf
+
+    stream_cache = {}
+    phi_values = []
+    pressure_values = []
+
+    for r0 in r0_list:
+        phi_val = read_phi_from_metadata(
+            r0,
+            probe="gx",
+        )
+
+        phi_values.append(
+            phi_val
+        )
+
+        for probe in (
+            "gx",
+            "gy",
+        ):
+            xdmf_file = (
+                build_xdmf_filename(
+                    r0,
+                    probe,
+                )
+            )
+
+            try:
+                stream_data = (
+                    read_stream_data(
+                        xdmf_file
+                    )
+                )
+            except Exception as error:
+                print(
+                    f"[WARNING] Failed to read "
+                    f"{xdmf_file}: {error}"
+                )
+
+                stream_data = None
+
+            stream_cache[
+                (r0, probe)
+            ] = stream_data
+
+            if stream_data is not None:
+                P = stream_data["P"]
+
+                if np.ma.isMaskedArray(P):
+                    values = P.compressed()
+                else:
+                    values = np.asarray(
+                        P,
+                        dtype=float,
+                    ).ravel()
+
+                    values = values[
+                        np.isfinite(values)
+                    ]
+
+                if len(values) > 0:
+                    pressure_values.append(
+                        values
+                    )
+
+    if pressure_values:
+        pressure_values = np.concatenate(
+            pressure_values
+        )
+
+        pmin = np.nanmin(
+            pressure_values
+        )
+
+        pmax = np.nanmax(
+            pressure_values
+        )
+
+        if (
+            not np.isfinite(pmin)
+            or not np.isfinite(pmax)
+            or abs(pmax - pmin) < eps
+        ):
+            pmin = -1.0
+            pmax = 1.0
+    else:
+        pmin = -1.0
+        pmax = 1.0
+
+    p_levels = np.linspace(
+        pmin,
+        pmax,
+        61,
+    )
+
+    all_stream_data = [
+        data
+        for data in stream_cache.values()
+        if data is not None
+    ]
+
+    if all_stream_data:
+        xmin = min(
+            data["xmin"]
+            for data in all_stream_data
+        )
+
+        xmax = max(
+            data["xmax"]
+            for data in all_stream_data
+        )
+
+        ymin = min(
+            data["ymin"]
+            for data in all_stream_data
+        )
+
+        ymax = max(
+            data["ymax"]
+            for data in all_stream_data
+        )
+
+        pad_x = 0.05 * (
+            xmax - xmin
+        )
+
+        pad_y = 0.05 * (
+            ymax - ymin
+        )
+
+        common_xlim = (
+            xmin - pad_x,
+            xmax + pad_x,
+        )
+
+        common_ylim = (
+            ymin - pad_y,
+            ymax + pad_y,
+        )
+    else:
+        common_xlim = (
+            0.0,
+            1.0,
+        )
+
+        common_ylim = (
+            0.0,
+            1.0,
+        )
+
+    n_groups = len(r0_list)
+    n_cols = 2 * n_groups
+
+    fig, axes = plt.subplots(
+        2,
+        n_cols,
+        figsize=(
+            max(
+                5.4 * n_groups,
+                11.0,
+            ),
+            9.2,
+        ),
+        squeeze=False,
+        gridspec_kw={
+            "height_ratios": [
+                1.0,
+                1.45,
+            ],
+            "wspace": 0.38,
+            "hspace": 0.38,
+        },
+    )
+
+    results = {}
+    cf_last = None
+
+    for i_r0, r0 in enumerate(
+        r0_list
+    ):
+        col_gx = 2 * i_r0
+        col_gy = col_gx + 1
+
+        ax_qx = axes[
+            0,
+            col_gx,
+        ]
+
+        ax_qy = axes[
+            0,
+            col_gy,
+        ]
+
+        ax_stream_gx = axes[
+            1,
+            col_gx,
+        ]
+
+        ax_stream_gy = axes[
+            1,
+            col_gy,
+        ]
+
+        data_gx = read_probe(
+            r0,
+            "gx",
+        )
+
+        data_gy = read_probe(
+            r0,
+            "gy",
+        )
+
+        gx = data_gx["gx"]
+        Qx_gx = data_gx["Qx"]
+
+        gy = data_gy["gy"]
+        Qy_gy = data_gy["Qy"]
+
+        ax_qx.plot(
+            gx,
+            Qx_gx,
+            linestyle="-",
+            linewidth=2.0,
+            color="#0072B2",
+        )
+
+        ax_qx.axhline(
+            0.0,
+            color="0.65",
+            linewidth=1.0,
+            linestyle=":",
+        )
+
+        ax_qx.set_xlabel(
+            r"$\nabla_0"
+            r"\tilde p_{\ell,x}$",
+            fontsize=14,
+        )
+
+        if i_r0 == 0:
+            ax_qx.set_ylabel(
+                r"$\tilde{Q}_{\ell,x}$",
+                fontsize=14,
+            )
+
+
+
+        ax_qx.tick_params(
+            axis="both",
+            labelsize=11,
+        )
+
+        ax_qx.grid(False)
+
+        ax_qy.plot(
+            gy,
+            Qy_gy,
+            linestyle="-",
+            linewidth=2.0,
+            color="#D55E00",
+        )
+
+        ax_qy.axhline(
+            0.0,
+            color="0.65",
+            linewidth=1.0,
+            linestyle=":",
+        )
+
+        ax_qy.set_xlabel(
+            r"$\nabla_0"
+            r"\tilde p_{\ell,y}$",
+            fontsize=14,
+        )
+
+        ax_qy.set_ylabel(
+            r"$\tilde{Q}_{\ell,y}$",
+            fontsize=14,
+        )
+
+
+
+        ax_qy.tick_params(
+            axis="both",
+            labelsize=11,
+        )
+
+        ax_qy.grid(False)
+
+        stream_gx = stream_cache[
+            (r0, "gx")
+        ]
+
+        stream_gy = stream_cache[
+            (r0, "gy")
+        ]
+
+        cf_gx = plot_stream_subplot(
+            ax_stream_gx,
+            stream_gx,
+            p_levels,
+            common_xlim,
+            common_ylim,
+        )
+
+        cf_gy = plot_stream_subplot(
+            ax_stream_gy,
+            stream_gy,
+            p_levels,
+            common_xlim,
+            common_ylim,
+        )
+
+        if cf_gx is not None:
+            cf_last = cf_gx
+
+        if cf_gy is not None:
+            cf_last = cf_gy
+
+        phi_val = phi_values[i_r0]
+
+        if phi_val is not None:
+            group_label = (
+                rf"$\tilde{{\Phi}}_{{g0}}"
+                rf"={phi_val:.2f}$"
+            )
+        else:
+            group_label = (
+                rf"$r_0={r0}$"
+            )
+
+        results[r0] = {
+            "phi": phi_val,
+            "gx": gx,
+            "gy": gy,
+            "Qx_gx": Qx_gx,
+            "Qy_gy": Qy_gy,
+        }
+
+        print(f"r0 = {r0}")
+        print(f"phi = {phi_val}")
+
+    fig.subplots_adjust(
+        left=0.115,
+        right=0.985,
+        bottom=0.075,
+        top=0.86,
+        wspace=0.38,
+        hspace=0.40,
+    )
+
+    fig.canvas.draw()
+
+    for i_r0, r0 in enumerate(
+        r0_list
+    ):
+        ax_left = axes[
+            0,
+            2 * i_r0,
+        ]
+
+        ax_right = axes[
+            0,
+            2 * i_r0 + 1,
+        ]
+
+        left_pos = ax_left.get_position()
+        right_pos = ax_right.get_position()
+
+        group_center = 0.5 * (
+            left_pos.x0
+            + right_pos.x1
+        )
+
+        phi_val = phi_values[i_r0]
+
+        if phi_val is not None:
+            text = (
+                rf"$\tilde{{\Phi}}_{{g0}}"
+                rf"={phi_val:.2f}$"
+            )
+        else:
+            text = rf"$r_0={r0}$"
+
+        fig.text(
+            group_center,
+            left_pos.y1 + 0.035,
+            text,
+            ha="center",
+            va="bottom",
+            fontsize=17,
+        )
+
+    stream_axes = axes[
+        1,
+        :,
+    ]
+
+    stream_positions = [
+        ax.get_position()
+        for ax in stream_axes
+    ]
+
+    if (
+        add_stream_colorbar
+        and cf_last is not None
+        and stream_positions
+    ):
+        left = min(
+            pos.x0
+            for pos in stream_positions
+        )
+
+        bottom = min(
+            pos.y0
+            for pos in stream_positions
+        )
+
+        top = max(
+            pos.y1
+            for pos in stream_positions
+        )
+
+        cbar_width = 0.011
+        cbar_pad = 0.070
+
+        cax = fig.add_axes(
+            [
+                left
+                - cbar_pad
+                - cbar_width,
+                bottom,
+                cbar_width,
+                top - bottom,
+            ]
+        )
+
+        cbar = fig.colorbar(
+            cf_last,
+            cax=cax,
+            orientation="vertical",
+        )
+
+        def sci_fmt(value, position):
+            if abs(value) < 1e-14:
+                return "0"
+
+            text = f"{value:.1e}"
+            text = text.replace(
+                "e-0",
+                "e-",
+            )
+            text = text.replace(
+                "e+0",
+                "e",
+            )
+            text = text.replace(
+                "e+",
+                "e",
+            )
+
+            return text
+
+        cbar.ax.yaxis.set_major_formatter(
+            FuncFormatter(sci_fmt)
+        )
+
+        cbar.ax.tick_params(
+            labelsize=10,
+        )
+
+        cbar.set_label(
+            r"$p_\ell$ (kPa)",
+            fontsize=14,
+            labelpad=8,
+        )
+
+    plt.savefig(
+        save_name,
+        bbox_inches="tight",
+        dpi=300,
+    )
+
+    if show_plot:
+        plt.show()
+
+    plt.close()
+
+    print(f"Saved: {save_name}")
+
+    return results
 
