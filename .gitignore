@@ -3,12 +3,19 @@ __pycache__/
 *.pyo
 *.DS_Store
 
+
 results/
 data/processed/
 
 *.xdmf
 *.h5
 *.pvd
+*.dat
+*.json
+*.png
+*.vtk
+*.csv
+
 
 .ipynb_checkpoints/
 
