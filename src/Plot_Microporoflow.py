@@ -1151,7 +1151,7 @@ def plot_principal_K_vs_U(
             marker=markers["K1"],
             markerfacecolor="white",
             markeredgecolor=colors["K1"],
-            label=r"$K_1/K_{1,0}$",
+            label=r"Direct RVE, $\tilde K_1/\tilde K_{1,0}$",
         ),
     ]
 
@@ -1163,7 +1163,7 @@ def plot_principal_K_vs_U(
                 color=colors["K1"],
                 linestyle="-",
                 linewidth=2.0,
-                label=r"$K_1^{kin}/K_{1,0}$",
+                label=r"Kinematic prediction, $\bar K_1/\bar K_{1,0}$",
             )
         )
 
@@ -1177,7 +1177,7 @@ def plot_principal_K_vs_U(
             marker=markers["K2"],
             markerfacecolor="white",
             markeredgecolor=colors["K2"],
-            label=r"$K_2/K_{2,0}$",
+            label=r"Direct RVE, $\tilde K_2/\tilde K_{2,0}$",
         )
     )
 
@@ -1189,7 +1189,7 @@ def plot_principal_K_vs_U(
                 color=colors["K2"],
                 linestyle="-",
                 linewidth=2.0,
-                label=r"$K_2^{kin}/K_{2,0}$",
+                label=r"Kinematic prediction, $\bar K_2/\bar K_{2,0}$",
             )
         )
 
@@ -1203,7 +1203,7 @@ def plot_principal_K_vs_U(
             marker=markers["theta"],
             markerfacecolor="white",
             markeredgecolor=colors["theta"],
-            label=r"$\theta$",
+            label=r"Direct RVE, $\tilde\theta$",
         )
     )
 
@@ -1215,7 +1215,7 @@ def plot_principal_K_vs_U(
                 color=colors["theta"],
                 linestyle="-",
                 linewidth=2.0,
-                label=r"$\theta^{kin}$",
+                label=r"Kinematic prediction, $\bar\theta$",
             )
         )
 
@@ -1226,7 +1226,7 @@ def plot_principal_K_vs_U(
             color=colors["theta"],
             linestyle="--",
             linewidth=2.0,
-            label=r"$\theta$ undefined at reference",
+            label=r"$\tilde\theta$ undefined at reference",
         )
     )
 
@@ -2163,8 +2163,8 @@ def plot_gas_pressure_loading_summary(
             ax_theta.set_title(r"Principal direction")
             ax_dist_gx.set_title(r"$|\mathbf{q}_{\ell}|$ distribution ($g_x$ probe)")
             ax_dist_gy.set_title(r"$|\mathbf{q}_{\ell}|$ distribution ($g_y$ probe)")
-            ax_pf0.set_title(rf"$p_g={fmt_pg(pf_list[0])}~\mathrm{{kPa}}$")
-            ax_pf1.set_title(rf"$p_g={fmt_pg(pf_list[1])}~\mathrm{{kPa}}$")
+            ax_pf0.set_title(rf"$\tilde p_g={fmt_pg(pf_list[0])}~\mathrm{{kPa}}$")
+            ax_pf1.set_title(rf"$\tilde p_g={fmt_pg(pf_list[1])}~\mathrm{{kPa}}$")
 
         if i_mode == 0:
             ax_dist_gx.legend(
@@ -2174,14 +2174,14 @@ def plot_gas_pressure_loading_summary(
                         [0],
                         color=colors["pg0"],
                         linewidth=2.0,
-                        label=rf"$p_g={pf_list[0]}~\mathrm{{kPa}}$",
+                        label=rf"$\tilde p_g={pf_list[0]}~\mathrm{{kPa}}$",
                     ),
                     Line2D(
                         [0],
                         [0],
                         color=colors["pg1"],
                         linewidth=2.0,
-                        label=rf"$p_g={pf_list[1]}~\mathrm{{kPa}}$",
+                        label=rf"$\tilde p_g={pf_list[1]}~\mathrm{{kPa}}$",
                     ),
                 ],
                 loc="upper left",
@@ -2207,8 +2207,8 @@ def plot_gas_pressure_loading_summary(
         for ax in axes[:, 0]:
             ax.set_ylim(K_min, K_max)
 
-    axes[0, 0].set_ylabel(r"$K_i/K_{i,\mathrm{ref}}$")
-    axes[0, 1].set_ylabel(r"$\theta$ (deg)")
+    axes[0, 0].set_ylabel(r"$\tilde K_i/\tilde K_{i,\mathrm{ref}}$")
+    axes[0, 1].set_ylabel(r"$\tilde\theta$ (deg)")
 
     for i in range(1, n_rows):
         axes[i, 1].set_ylabel("")
@@ -2223,7 +2223,7 @@ def plot_gas_pressure_loading_summary(
             marker=markers["K1"],
             markerfacecolor="white",
             markeredgecolor=colors["pg0"],
-            label=rf"$K_1/K_{{1,\mathrm{{ref}}}},\ p_g={pf_list[0]}~\mathrm{{kPa}}$",
+            label=rf"$\tilde K_1/\tilde K_{{1,\mathrm{{ref}}}},\ \tilde p_g={pf_list[0]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
@@ -2234,7 +2234,7 @@ def plot_gas_pressure_loading_summary(
             marker=markers["K1"],
             markerfacecolor="white",
             markeredgecolor=colors["pg1"],
-            label=rf"$K_1/K_{{1,\mathrm{{ref}}}},\ p_g={pf_list[1]}~\mathrm{{kPa}}$",
+            label=rf"$\tilde K_1/\tilde K_{{1,\mathrm{{ref}}}},\ \tilde p_g={pf_list[1]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
@@ -2245,7 +2245,7 @@ def plot_gas_pressure_loading_summary(
             marker=markers["K2"],
             markerfacecolor="white",
             markeredgecolor=colors["pg0"],
-            label=rf"$K_2/K_{{2,\mathrm{{ref}}}},\ p_g={pf_list[0]}~\mathrm{{kPa}}$",
+            label=rf"$\tilde K_2/\tilde K_{{2,\mathrm{{ref}}}},\ \tilde p_g={pf_list[0]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
@@ -2256,7 +2256,7 @@ def plot_gas_pressure_loading_summary(
             marker=markers["K2"],
             markerfacecolor="white",
             markeredgecolor=colors["pg1"],
-            label=rf"$K_2/K_{{2,\mathrm{{ref}}}},\ p_g={pf_list[1]}~\mathrm{{kPa}}$",
+            label=rf"$\tilde K_2/\tilde K_{{2,\mathrm{{ref}}}},\ \tilde p_g={pf_list[1]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
@@ -2267,7 +2267,7 @@ def plot_gas_pressure_loading_summary(
             marker=markers["theta"],
             markerfacecolor="white",
             markeredgecolor=colors["pg0"],
-            label=rf"$\theta,\ p_g={pf_list[0]}~\mathrm{{kPa}}$",
+            label=rf"$\tilde\theta,\ \tilde p_g={pf_list[0]}~\mathrm{{kPa}}$",
         ),
         Line2D(
             [0],
@@ -2278,7 +2278,7 @@ def plot_gas_pressure_loading_summary(
             marker=markers["theta"],
             markerfacecolor="white",
             markeredgecolor=colors["pg1"],
-            label=rf"$\theta,\ p_g={pf_list[1]}~\mathrm{{kPa}}$",
+            label=rf"$\tilde\theta,\ \tilde p_g={pf_list[1]}~\mathrm{{kPa}}$",
         ),
     ]
 
@@ -2863,7 +2863,7 @@ def plot_pg_after_stretch_x_summary(
                 markeredgecolor=color,
                 markeredgewidth=1.0,
                 markevery=markevery,
-                label=r"$K_1$",
+                label=r"$\tilde K_1$",
             )
 
             axk.plot(
@@ -2878,7 +2878,7 @@ def plot_pg_after_stretch_x_summary(
                 markeredgecolor=color,
                 markeredgewidth=1.0,
                 markevery=markevery,
-                label=r"$K_2$",
+                label=r"$\tilde K_2$",
             )
 
         phi_val = phi_vals.get(r0, None)
@@ -2887,10 +2887,10 @@ def plot_pg_after_stretch_x_summary(
         else:
             axk.set_title(rf"$\tilde{{\Phi}}_{{g0}} = {phi_val:.2f}$")
 
-        axk.set_xlabel(r"$p_g$ (kPa)")
+        axk.set_xlabel(r"$\tilde p_g$ (kPa)")
 
         if i_r0 == 0:
-            axk.set_ylabel(r"$K_i/K_{i,p_g=0}$")
+            axk.set_ylabel(r"$\tilde K_i/\tilde K_{i,\tilde p_g=0}$")
 
         axk.grid(False)
         axk.tick_params(axis="both", labelsize=11)
@@ -2924,7 +2924,7 @@ def plot_pg_after_stretch_x_summary(
             marker="o",
             markerfacecolor="white",
             markeredgecolor="black",
-            label=r"$K_1$",
+            label=r"$\tilde K_1$",
         ),
         Line2D(
             [0], [0],
@@ -2934,7 +2934,7 @@ def plot_pg_after_stretch_x_summary(
             marker="s",
             markerfacecolor="white",
             markeredgecolor="black",
-            label=r"$K_2$",
+            label=r"$\tilde K_2$",
         ),
     ]
 
@@ -2992,7 +2992,7 @@ def plot_pg_after_stretch_x_summary(
         fig.text(
             0.5 * (x0 + x1),
             arrow_y - 0.030,
-            r"$p_g$ (kPa)",
+            r"$\tilde p_g$ (kPa)",
             ha="center",
             va="top",
         )
@@ -3017,7 +3017,7 @@ def plot_pg_after_stretch_x_summary(
 
     print(f"Saved: {save_name}")
 
-def plot_figure9_summary(
+def plot_figure10_loading_summary(
     r0_list,
     cases=None,
     loading_text=None,
@@ -3028,7 +3028,7 @@ def plot_figure9_summary(
     slice_start=5,
     final_index=-1,
     eps=1e-12,
-    save_name="plots/Figure9_summary.png",
+    save_name="plots/Figure10_loading_summary.png",
     show_plot=False,
 ):
 
@@ -3067,7 +3067,7 @@ def plot_figure9_summary(
             "uniaxial loading": r"$E_x=0.3$",
             "pure volumetric loading": r"$E_x=E_y=0.3$",
             "simple shear loading": r"$E_{xy}=0.3$",
-            "gas pressure loading": rf"$p_g={pg}~\mathrm{{kPa}}$",
+            "gas pressure loading": rf"$\tilde p_g={pg}~\mathrm{{kPa}}$",
         }
 
     colors = {
@@ -3304,9 +3304,9 @@ def plot_figure9_summary(
     fig, axes = plt.subplots(1, 3, figsize=(12.5, 3.9))
 
     plot_settings = [
-        ("C_K", r"$C_K=\mathrm{tr}(\mathbf{K})/\mathrm{tr}(\mathbf{K}_0)$"),
-        ("A_K", r"$A_K=K_{\max}/K_{\min}$"),
-        ("E_K", r"$E_K=\|\mathbf{K}-\mathbf{K}^{kin}\|_F/\|\mathbf{K}\|_F$"),
+        ("C_K", r"$C_K=\mathrm{tr}(\tilde{\mathbf{K}})/\mathrm{tr}(\tilde{\mathbf{K}}_0)$"),
+        ("A_K", r"$A_K=\tilde K_{\max}/\tilde K_{\min}$"),
+        ("E_K", r"$E_K=\|\tilde{\mathbf{K}}-\bar{\mathbf{K}}\|_F/\|\tilde{\mathbf{K}}\|_F$"),
     ]
 
     for ax, (key, ylabel) in zip(axes, plot_settings):
