@@ -13,7 +13,7 @@ import pandas as pd
 import pyvista as pv
 
 from matplotlib.lines import Line2D
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.patches import Circle, FancyArrowPatch, Rectangle, RegularPolygon
 from matplotlib.ticker import FormatStrFormatter, FuncFormatter, MaxNLocator
 plt.rcParams.update({
     "font.size": 15,
@@ -45,6 +45,7 @@ def plot_linear_homogenization_hollowbox(
     save_name="plots/linear_homogenization_K_vs_phi.png",
     show_plot=False,
     eps=1e-12,
+    geometry_r0_values=(0.072, 0.315, 0.41),
 ):
 
     os.makedirs(os.path.dirname(save_name) or ".", exist_ok=True)
@@ -57,10 +58,10 @@ def plot_linear_homogenization_hollowbox(
 
     def shape_label(shape):
         if shape == "round":
-            return "Microscopic model - circular inclusions"
+            return "Circular gas pore"
         if shape == "hex":
-            return "Microscopic model - hexagonal inclusions"
-        return f"Microscopic model - {shape} inclusions"
+            return "Hexagonal gas pore"
+        return f"{shape.capitalize()} gas pore"
 
     def build_basename(shape, r0, probe):
         return f"{res_folder}/{res_basename_prefix}-{shape}-r0={fmt_file(r0)}-{probe}"
@@ -83,6 +84,79 @@ def plot_linear_homogenization_hollowbox(
                     return float(metadata[key])
 
         return None
+
+    def read_geometry_metadata(shape, r0):
+        filename = build_metadata_filename(shape, r0, "gx")
+        with open(filename, "r") as f:
+            return json.load(f)
+
+    def draw_reference_rve(ax, metadata, phi, matrix_color):
+        """Draw the exact analytic RVE construction stored with a result.
+
+        The colored rectangle is the solid--liquid matrix. The central pore
+        and four clipped corner images reproduce the periodic construction
+        used by ``run_HollowBox_Mesh``; no finite-element mesh is rendered.
+        """
+        mesh_params = metadata["mesh_params"]
+        xmin, ymin = mesh_params["xmin"], mesh_params["ymin"]
+        xmax, ymax = mesh_params["xmax"], mesh_params["ymax"]
+        r0 = mesh_params["r0"]
+        shape = mesh_params["hole_shape"]
+
+        ax.add_patch(
+            Rectangle(
+                (xmin, ymin),
+                xmax - xmin,
+                ymax - ymin,
+                facecolor=matrix_color,
+                edgecolor=matrix_color,
+                linewidth=0.7,
+            )
+        )
+
+        centers = [
+            (xmin, ymin),
+            (xmax, ymin),
+            (xmax, ymax),
+            (xmin, ymax),
+            (0.5 * (xmin + xmax), 0.5 * (ymin + ymax)),
+        ]
+        for center in centers:
+            if shape == "round":
+                pore = Circle(
+                    center,
+                    radius=r0,
+                    facecolor="white",
+                    edgecolor=matrix_color,
+                    linewidth=0.55,
+                )
+            elif shape == "hex":
+                pore = RegularPolygon(
+                    center,
+                    numVertices=6,
+                    radius=r0,
+                    orientation=np.pi / 2.0,
+                    facecolor="white",
+                    edgecolor=matrix_color,
+                    linewidth=0.55,
+                )
+            else:
+                raise ValueError(f"Unsupported RVE pore shape: {shape}")
+            ax.add_patch(pore)
+
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        ax.set_aspect("equal")
+        ax.set_axis_off()
+        ax.text(
+            0.5,
+            -0.12,
+            rf"$\tilde{{\Phi}}_{{g0}}={phi:.2f}$",
+            transform=ax.transAxes,
+            ha="center",
+            va="top",
+            fontsize=8.5,
+        )
 
     def read_probe(filename):
         qois_vals, names = load_qois(filename)
@@ -203,11 +277,49 @@ def plot_linear_homogenization_hollowbox(
     K_diff = Km * (1.0 - phi_grid) ** 2
     mask_dilute = K_dilute > 0.0
 
-    fig, ax = plt.subplots(figsize=(7.6, 5.2))
+    if isinstance(geometry_r0_values, dict):
+        geometry_r0_values_by_shape = {
+            shape: tuple(geometry_r0_values[shape])
+            for shape in ("round", "hex")
+        }
+    else:
+        geometry_r0_values_by_shape = {
+            shape: tuple(geometry_r0_values)
+            for shape in ("round", "hex")
+        }
+
+    geometry_data = {}
+    for shape in ("round", "hex"):
+        for r0 in geometry_r0_values_by_shape[shape]:
+            selection = df[
+                (df["shape"] == shape) & np.isclose(df["r0"], r0)
+            ]
+            if len(selection) != 1:
+                raise RuntimeError(
+                    f"Expected one Figure 3 result for shape={shape}, r0={r0}."
+                )
+            geometry_data[(shape, r0)] = (
+                read_geometry_metadata(shape, r0),
+                float(selection.iloc[0]["phi"]),
+            )
+
+    fig = plt.figure(figsize=(7.6, 9.4))
+    outer_grid = fig.add_gridspec(
+        nrows=2,
+        ncols=1,
+        height_ratios=(3.35, 2.65),
+        hspace=0.32,
+    )
+    ax = fig.add_subplot(outer_grid[0])
 
     markers = {
         "round": "o",
         "hex": "s",
+    }
+
+    shape_colors = {
+        "round": "#1f77b4",
+        "hex": "#ff7f0e",
     }
 
     linestyles = {
@@ -226,6 +338,7 @@ def plot_linear_homogenization_hollowbox(
             sub["Keq"] / Km,
             marker=markers.get(shape, "o"),
             linestyle=linestyles.get(shape, "-"),
+            color=shape_colors.get(shape),
             linewidth=2.0,
             markerfacecolor="white",
             label=shape_label(shape),
@@ -250,12 +363,51 @@ def plot_linear_homogenization_hollowbox(
     )
 
     ax.set_xlabel(r"$\tilde{\Phi}_{g0}$", fontsize=14)
-    ax.set_ylabel(r"$K_i/K_m$", fontsize=14)
+    ax.set_ylabel(r"$\tilde K_i/k_m$", fontsize=14)
     ax.tick_params(axis="both", labelsize=12)
     ax.grid(False)
     ax.legend(fontsize=9.5, frameon=True)
+    ax.text(-0.10, 1.03, "(a)", transform=ax.transAxes, fontsize=13, fontweight="bold")
 
-    plt.tight_layout()
+    geometry_grid = outer_grid[1].subgridspec(
+        nrows=2,
+        ncols=4,
+        width_ratios=(0.72, 1.0, 1.0, 1.0),
+        hspace=0.42,
+        wspace=0.12,
+    )
+    lower_bbox = outer_grid[1].get_position(fig)
+    fig.text(
+        lower_bbox.x0,
+        lower_bbox.y1 + 0.012,
+        "(b)",
+        fontsize=13,
+        fontweight="bold",
+    )
+
+    row_labels = ("Circular pore", "Hexagonal pore")
+    for row, (shape, row_label) in enumerate(zip(("round", "hex"), row_labels)):
+        label_ax = fig.add_subplot(geometry_grid[row, 0])
+        label_ax.set_axis_off()
+        label_ax.text(
+            0.92,
+            0.5,
+            row_label,
+            ha="right",
+            va="center",
+            fontsize=10,
+        )
+        for column, r0 in enumerate(geometry_r0_values_by_shape[shape], start=1):
+            geometry_ax = fig.add_subplot(geometry_grid[row, column])
+            metadata, phi = geometry_data[(shape, r0)]
+            draw_reference_rve(
+                geometry_ax,
+                metadata,
+                phi,
+                matrix_color=shape_colors[shape],
+            )
+
+    fig.subplots_adjust(left=0.12, right=0.98, bottom=0.06, top=0.97)
     plt.savefig(save_name, bbox_inches="tight", dpi=300)
 
     if show_plot:
@@ -299,10 +451,10 @@ def plot_principal_K_vs_U(
     }
 
     x_labels = {
-        "xx": r"$E_x$",
-        "yy": r"$E_y$",
-        "xy": r"$E_{xy}$",
-        "yx": r"$E_{yx}$",
+        "xx": r"$\Delta\lambda_x$",
+        "yy": r"$\Delta\lambda_y$",
+        "xy": r"$\gamma$",
+        "yx": r"$\tilde F_{yx}$",
     }
 
     if x_component not in x_components:
@@ -1151,7 +1303,7 @@ def plot_principal_K_vs_U(
             marker=markers["K1"],
             markerfacecolor="white",
             markeredgecolor=colors["K1"],
-            label=r"Direct RVE, $\tilde K_1/\tilde K_{1,0}$",
+            label=r"Microscopic model, $\tilde K_1/\tilde K_{1,0}$",
         ),
     ]
 
@@ -1163,7 +1315,7 @@ def plot_principal_K_vs_U(
                 color=colors["K1"],
                 linestyle="-",
                 linewidth=2.0,
-                label=r"Kinematic prediction, $\bar K_1/\bar K_{1,0}$",
+                label=r"Macroscopic model, $\bar K_1/\bar K_{1,0}$",
             )
         )
 
@@ -1177,7 +1329,7 @@ def plot_principal_K_vs_U(
             marker=markers["K2"],
             markerfacecolor="white",
             markeredgecolor=colors["K2"],
-            label=r"Direct RVE, $\tilde K_2/\tilde K_{2,0}$",
+            label=r"Microscopic model, $\tilde K_2/\tilde K_{2,0}$",
         )
     )
 
@@ -1189,7 +1341,7 @@ def plot_principal_K_vs_U(
                 color=colors["K2"],
                 linestyle="-",
                 linewidth=2.0,
-                label=r"Kinematic prediction, $\bar K_2/\bar K_{2,0}$",
+                label=r"Macroscopic model, $\bar K_2/\bar K_{2,0}$",
             )
         )
 
@@ -1203,7 +1355,7 @@ def plot_principal_K_vs_U(
             marker=markers["theta"],
             markerfacecolor="white",
             markeredgecolor=colors["theta"],
-            label=r"Direct RVE, $\tilde\theta$",
+            label=r"Microscopic model, $\tilde\theta$",
         )
     )
 
@@ -1215,7 +1367,7 @@ def plot_principal_K_vs_U(
                 color=colors["theta"],
                 linestyle="-",
                 linewidth=2.0,
-                label=r"Kinematic prediction, $\bar\theta$",
+                label=r"Macroscopic model, $\bar\theta$",
             )
         )
 
@@ -1411,9 +1563,9 @@ def plot_gas_pressure_loading_summary(
     }
 
     mode_to_xlabel = {
-        "stretch-x": r"$E_x$",
-        "volumic": r"$E_x=E_y$",
-        "shear": r"$E_{xy}$",
+        "stretch-x": r"$\Delta\lambda_x$",
+        "volumic": r"$\Delta\lambda_x=\Delta\lambda_y$",
+        "shear": r"$\gamma$",
     }
 
     mode_to_label = {
@@ -2911,9 +3063,15 @@ def plot_pg_after_stretch_x_summary(
             ax.axis("off")
 
     ex_handles = [
-        Line2D([0], [0], color=ex_colors[i], linewidth=2.0, label=rf"$E_x = {fmt_disp(Ex)}$")
-        for i, Ex in enumerate(Ex_list)
-    ]
+    Line2D(
+        [0],
+        [0],
+        color=ex_colors[i],
+        linewidth=2.0,
+        label=rf"$\Delta\lambda_x = {fmt_disp(Ex)}$",
+    )
+    for i, Ex in enumerate(Ex_list)]
+
 
     style_handles = [
         Line2D(
@@ -3064,9 +3222,9 @@ def plot_figure10_loading_summary(
 
     if loading_text is None:
         loading_text = {
-            "uniaxial loading": r"$E_x=0.3$",
-            "pure volumetric loading": r"$E_x=E_y=0.3$",
-            "simple shear loading": r"$E_{xy}=0.3$",
+            "uniaxial loading": r"$\Delta\lambda_x=0.3$",
+            "pure volumetric loading": r"$\Delta\lambda_x=\Delta\lambda_y=0.3$",
+            "simple shear loading": r"$\gamma=0.3$",
             "gas pressure loading": rf"$\tilde p_g={pg}~\mathrm{{kPa}}$",
         }
 
@@ -4259,11 +4417,11 @@ def plot_q_vs_gradp(
             fontsize=14,
         )
 
-        if i_r0 == 0:
-            ax_qx.set_ylabel(
-                r"$\tilde{Q}_{\ell,x}$",
-                fontsize=14,
-            )
+
+        ax_qx.set_ylabel(
+            r"$\tilde{Q}_{\ell,x}$",
+            fontsize=14,
+        )
 
 
 
@@ -4511,4 +4669,3 @@ def plot_q_vs_gradp(
     print(f"Saved: {save_name}")
 
     return results
-
