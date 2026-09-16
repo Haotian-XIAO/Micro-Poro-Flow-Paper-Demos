@@ -109,8 +109,9 @@ def plot_linear_homogenization_hollowbox(
                 xmax - xmin,
                 ymax - ymin,
                 facecolor=matrix_color,
-                edgecolor=matrix_color,
-                linewidth=0.7,
+                edgecolor="none",
+                linewidth=0.0,
+                antialiased=False,
             )
         )
 
