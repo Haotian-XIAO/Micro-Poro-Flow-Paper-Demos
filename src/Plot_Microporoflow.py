@@ -1571,7 +1571,7 @@ def plot_gas_pressure_loading_summary(
 
     mode_to_label = {
         "stretch-x": r"Uniaxial loading",
-        "volumic": r"Pure volumetric loading",
+        "volumic": r"Equibiaxial stretching",
         "shear": r"Simple shear loading",
     }
 
@@ -1807,34 +1807,56 @@ def plot_gas_pressure_loading_summary(
         q = np.asarray(surf.cell_data["q_l"], dtype=float)[:, :2]
         qmag = np.linalg.norm(q, axis=1)
 
-        valid = np.isfinite(qmag)
+        faces = surf.faces.reshape(-1, 4)[:, 1:4]
+        points = np.asarray(surf.points, dtype=float)
+        edge_01 = points[faces[:, 1]] - points[faces[:, 0]]
+        edge_02 = points[faces[:, 2]] - points[faces[:, 0]]
+        current_cell_volumes = 0.5 * np.linalg.norm(
+            np.cross(edge_01, edge_02), axis=1
+        )
+
+        valid = (
+            np.isfinite(qmag)
+            & np.isfinite(current_cell_volumes)
+            & (current_cell_volumes > 0.0)
+        )
         qmag = qmag[valid]
+        current_cell_volumes = current_cell_volumes[valid]
 
         if len(qmag) == 0:
             return {
                 "values": np.array([]),
+                "weights": np.array([]),
                 "mean": np.nan,
                 "std": np.nan,
                 "n_cells": 0,
             }
 
+        normalized_weights = current_cell_volumes / np.sum(current_cell_volumes)
+        mean = float(np.sum(normalized_weights * qmag))
+
         return {
             "values": qmag,
-            "mean": float(np.mean(qmag)),
-            "std": float(np.std(qmag)),
+            "weights": current_cell_volumes,
+            "mean": mean,
+            "std": float(
+                np.sqrt(np.sum(normalized_weights * (qmag - mean) ** 2))
+            ),
             "n_cells": int(len(qmag)),
         }
 
     def plot_distribution_subplot(ax, data0, data1, xlim, ymax):
         vals0 = data0["values"]
         vals1 = data1["values"]
+        current_volumes0 = data0["weights"]
+        current_volumes1 = data1["weights"]
 
         bins = np.linspace(xlim[0], xlim[1], 26)
         xgrid = np.linspace(xlim[0], xlim[1], 400)
         bin_width = bins[1] - bins[0]
 
         if len(vals0) > 0:
-            weights0 = np.ones_like(vals0, dtype=float) * 100.0 / len(vals0)
+            weights0 = 100.0 * current_volumes0 / np.sum(current_volumes0)
 
             ax.hist(
                 vals0,
@@ -1848,7 +1870,7 @@ def plot_gas_pressure_loading_summary(
             )
 
         if len(vals1) > 0:
-            weights1 = np.ones_like(vals1, dtype=float) * 100.0 / len(vals1)
+            weights1 = 100.0 * current_volumes1 / np.sum(current_volumes1)
 
             ax.hist(
                 vals1,
@@ -1862,7 +1884,7 @@ def plot_gas_pressure_loading_summary(
             )
 
         if len(vals0) > 1:
-            w0 = np.ones_like(vals0, dtype=float) / len(vals0)
+            w0 = current_volumes0 / np.sum(current_volumes0)
             kde0 = weighted_kde(vals0, w0, xgrid)
 
             ax.plot(
@@ -1873,7 +1895,7 @@ def plot_gas_pressure_loading_summary(
             )
 
         if len(vals1) > 1:
-            w1 = np.ones_like(vals1, dtype=float) / len(vals1)
+            w1 = current_volumes1 / np.sum(current_volumes1)
             kde1 = weighted_kde(vals1, w1, xgrid)
 
             ax.plot(
@@ -2092,6 +2114,7 @@ def plot_gas_pressure_loading_summary(
                 except FileNotFoundError:
                     dist_cache[(mode, pf, probe)] = {
                         "values": np.array([]),
+                        "weights": np.array([]),
                         "mean": np.nan,
                         "std": np.nan,
                         "n_cells": 0,
@@ -2100,7 +2123,7 @@ def plot_gas_pressure_loading_summary(
     if len(all_q) > 0:
         all_q = np.asarray(all_q, dtype=float)
         qmin = 0.0
-        qmax = np.nanpercentile(all_q, 99.2)
+        qmax = np.nanmax(all_q)
 
         if not np.isfinite(qmax) or qmax <= qmin:
             qmax = np.nanmax(all_q)
@@ -2122,12 +2145,13 @@ def plot_gas_pressure_loading_summary(
         if len(vals) == 0:
             continue
 
-        weights = np.ones_like(vals, dtype=float) * 100.0 / len(vals)
+        current_volumes = data["weights"]
+        weights = 100.0 * current_volumes / np.sum(current_volumes)
         hist, _ = np.histogram(vals, bins=bins_tmp, weights=weights, density=False)
         local_max = np.nanmax(hist)
 
         if len(vals) > 1:
-            ww = np.ones_like(vals, dtype=float) / len(vals)
+            ww = current_volumes / np.sum(current_volumes)
             kde = weighted_kde(vals, ww, xgrid_tmp)
             kde_percent = kde * bin_width_tmp * 100.0
             local_max = max(local_max, np.nanmax(kde_percent))
@@ -3203,7 +3227,7 @@ def plot_figure10_loading_summary(
             },
             {
                 "mode": "volumic",
-                "label": "pure volumetric loading",
+                "label": "equibiaxial stretching",
                 "pf": 0.0,
                 "use_prediction": True,
             },
@@ -3224,21 +3248,21 @@ def plot_figure10_loading_summary(
     if loading_text is None:
         loading_text = {
             "uniaxial loading": r"$\Delta\lambda_x=0.3$",
-            "pure volumetric loading": r"$\Delta\lambda_x=\Delta\lambda_y=0.3$",
+            "equibiaxial stretching": r"$\Delta\lambda_x=\Delta\lambda_y=0.3$",
             "simple shear loading": r"$\gamma=0.3$",
             "gas pressure loading": rf"$\tilde p_g={pg}~\mathrm{{kPa}}$",
         }
 
     colors = {
         "uniaxial loading": "#0072B2",
-        "pure volumetric loading": "#D55E00",
+        "equibiaxial stretching": "#D55E00",
         "simple shear loading": "#009E73",
         "gas pressure loading": "#CC79A7",
     }
 
     markers = {
         "uniaxial loading": "o",
-        "pure volumetric loading": "s",
+        "equibiaxial stretching": "s",
         "simple shear loading": "^",
         "gas pressure loading": "D",
     }
