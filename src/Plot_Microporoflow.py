@@ -36,6 +36,15 @@ def load_qois(qois_filename):
 def get(qois_vals, qois_names, key):
     return qois_vals[:, qois_names.index(key)]
 
+# Reference state for all K-based indicators (C_K, K/K_ref, prediction K0): the
+# frame saved at the end of the first load step (t = 0.01), where the solid is
+# unloaded and the liquid pressure gradient has just reached its test value.
+T_REF = 0.01
+
+def reference_frame_index(qois_vals, qois_names, t_ref=T_REF):
+    """Index of the saved frame whose time is closest to t_ref."""
+    return int(np.argmin(np.abs(get(qois_vals, qois_names, "t") - t_ref)))
+
 def plot_linear_homogenization_hollowbox(
     res_folder="results_linear_homogenization",
     shape_list=("round", "hex"),
@@ -46,6 +55,7 @@ def plot_linear_homogenization_hollowbox(
     show_plot=False,
     eps=1e-12,
     geometry_r0_values=(0.072, 0.315, 0.41),
+    add_hs_bound=True,
 ):
 
     os.makedirs(os.path.dirname(save_name) or ".", exist_ok=True)
@@ -276,6 +286,9 @@ def plot_linear_homogenization_hollowbox(
 
     K_dilute = Km * (1.0 - 2.0 * phi_grid)
     K_diff = Km * (1.0 - phi_grid) ** 2
+    # Hashin-Shtrikman upper bound for a 2D isotropic composite with insulating pores:
+    # K_eff / k_m <= (1 - phi) / (1 + phi); no admissible result can exceed it.
+    K_hs = Km * (1.0 - phi_grid) / (1.0 + phi_grid)
     mask_dilute = K_dilute > 0.0
 
     if isinstance(geometry_r0_values, dict):
@@ -363,6 +376,16 @@ def plot_linear_homogenization_hollowbox(
         label="Differential scheme",
     )
 
+    if add_hs_bound:
+        ax.plot(
+            phi_grid,
+            K_hs / Km,
+            color="black",
+            linestyle="-",
+            linewidth=1.2,
+            label="Hashin\u2013Shtrikman upper bound",
+        )
+
     ax.set_xlabel(r"$\tilde{\Phi}_{g0}$", fontsize=14)
     ax.set_ylabel(r"$\tilde K_i/k_m$", fontsize=14)
     ax.tick_params(axis="both", labelsize=12)
@@ -426,7 +449,8 @@ def plot_principal_K_vs_U(
     pf_list=(0.0,),
     x_component="xx",
     phi=None,
-    slice_start=5,
+    slice_start=None,
+    t_ref=T_REF,
     eps=1e-12,
     add_prediction=True,
     save_name="plots/principal_K_vs_U.png",
@@ -529,38 +553,43 @@ def plot_principal_K_vs_U(
 
     def read_probe(filename):
         qois_vals, names = load_qois(filename)
+        start = (
+            reference_frame_index(qois_vals, names, t_ref)
+            if slice_start is None
+            else slice_start
+        )
 
         data = {
             "Uxx": np.asarray(
-                get(qois_vals, names, "U_bar_XX")[slice_start:],
+                get(qois_vals, names, "U_bar_XX")[start:],
                 dtype=float,
             ),
             "Uyy": np.asarray(
-                get(qois_vals, names, "U_bar_YY")[slice_start:],
+                get(qois_vals, names, "U_bar_YY")[start:],
                 dtype=float,
             ),
             "Uxy": np.asarray(
-                get(qois_vals, names, "U_bar_XY")[slice_start:],
+                get(qois_vals, names, "U_bar_XY")[start:],
                 dtype=float,
             ),
             "Uyx": np.asarray(
-                get(qois_vals, names, "U_bar_YX")[slice_start:],
+                get(qois_vals, names, "U_bar_YX")[start:],
                 dtype=float,
             ),
             "Qx": np.asarray(
-                get(qois_vals, names, "Q_l_avg_x")[slice_start:],
+                get(qois_vals, names, "Q_l_avg_x")[start:],
                 dtype=float,
             ),
             "Qy": np.asarray(
-                get(qois_vals, names, "Q_l_avg_y")[slice_start:],
+                get(qois_vals, names, "Q_l_avg_y")[start:],
                 dtype=float,
             ),
             "gx": np.asarray(
-                get(qois_vals, names, "grad_p_bar_avg_x")[slice_start:],
+                get(qois_vals, names, "grad_p_bar_avg_x")[start:],
                 dtype=float,
             ),
             "gy": np.asarray(
-                get(qois_vals, names, "grad_p_bar_avg_y")[slice_start:],
+                get(qois_vals, names, "grad_p_bar_avg_y")[start:],
                 dtype=float,
             ),
         }
@@ -580,9 +609,14 @@ def plot_principal_K_vs_U(
         if len(theta_raw) == 0:
             return theta_cont
 
+        # Frame 0 is the isotropic unloaded reference: its principal axis is
+        # undefined (noise-driven), so the unwrapping starts at frame 1.
         theta_cont[0] = theta_raw[0]
 
-        for i in range(1, len(theta_raw)):
+        if len(theta_raw) > 1:
+            theta_cont[1] = theta_raw[1]
+
+        for i in range(2, len(theta_raw)):
             delta = (
                 theta_raw[i]
                 - theta_cont[i - 1]
@@ -600,9 +634,14 @@ def plot_principal_K_vs_U(
         if len(theta_raw) == 0:
             return theta_cont
 
+        # Frame 0 is the isotropic unloaded reference: its principal axis is
+        # undefined (noise-driven), so the unwrapping starts at frame 1.
         theta_cont[0] = theta_raw[0]
 
-        for i in range(1, len(theta_raw)):
+        if len(theta_raw) > 1:
+            theta_cont[1] = theta_raw[1]
+
+        for i in range(2, len(theta_raw)):
             delta = (
                 theta_raw[i]
                 - theta_cont[i - 1]
@@ -1533,7 +1572,8 @@ def plot_gas_pressure_loading_summary(
     pf_list=(0.0, 0.2),
     probe_list=("gx", "gy"),
     phi=None,
-    slice_start=5,
+    slice_start=None,
+    t_ref=T_REF,
     eps=1e-12,
     save_name="plots/Figure8_pg_compare.png",
     show_plot=False,
@@ -1634,16 +1674,21 @@ def plot_gas_pressure_loading_summary(
 
     def read_probe(filename):
         qois_vals, names = load_qois(filename)
+        start = (
+            reference_frame_index(qois_vals, names, t_ref)
+            if slice_start is None
+            else slice_start
+        )
 
         data = {
-            "Uxx": np.asarray(get(qois_vals, names, "U_bar_XX")[slice_start:], dtype=float),
-            "Uyy": np.asarray(get(qois_vals, names, "U_bar_YY")[slice_start:], dtype=float),
-            "Uxy": np.asarray(get(qois_vals, names, "U_bar_XY")[slice_start:], dtype=float),
-            "Uyx": np.asarray(get(qois_vals, names, "U_bar_YX")[slice_start:], dtype=float),
-            "Qx": np.asarray(get(qois_vals, names, "Q_l_avg_x")[slice_start:], dtype=float),
-            "Qy": np.asarray(get(qois_vals, names, "Q_l_avg_y")[slice_start:], dtype=float),
-            "gx": np.asarray(get(qois_vals, names, "grad_p_bar_avg_x")[slice_start:], dtype=float),
-            "gy": np.asarray(get(qois_vals, names, "grad_p_bar_avg_y")[slice_start:], dtype=float),
+            "Uxx": np.asarray(get(qois_vals, names, "U_bar_XX")[start:], dtype=float),
+            "Uyy": np.asarray(get(qois_vals, names, "U_bar_YY")[start:], dtype=float),
+            "Uxy": np.asarray(get(qois_vals, names, "U_bar_XY")[start:], dtype=float),
+            "Uyx": np.asarray(get(qois_vals, names, "U_bar_YX")[start:], dtype=float),
+            "Qx": np.asarray(get(qois_vals, names, "Q_l_avg_x")[start:], dtype=float),
+            "Qy": np.asarray(get(qois_vals, names, "Q_l_avg_y")[start:], dtype=float),
+            "gx": np.asarray(get(qois_vals, names, "grad_p_bar_avg_x")[start:], dtype=float),
+            "gy": np.asarray(get(qois_vals, names, "grad_p_bar_avg_y")[start:], dtype=float),
         }
 
         npts = len(data["Uxx"])
@@ -1704,9 +1749,14 @@ def plot_gas_pressure_loading_summary(
         if len(theta_raw) == 0:
             return theta_cont
 
+        # Frame 0 is the isotropic unloaded reference: its principal axis is
+        # undefined (noise-driven), so the unwrapping starts at frame 1.
         theta_cont[0] = theta_raw[0]
 
-        for i in range(1, len(theta_raw)):
+        if len(theta_raw) > 1:
+            theta_cont[1] = theta_raw[1]
+
+        for i in range(2, len(theta_raw)):
             delta = (theta_raw[i] - theta_cont[i - 1] + 90.0) % 180.0 - 90.0
             theta_cont[i] = theta_cont[i - 1] + delta
 
@@ -3208,7 +3258,8 @@ def plot_figure10_loading_summary(
     prefix="Fig_loading",
     pg=0.2,
     r0_to_phi=None,
-    slice_start=5,
+    slice_start=None,
+    t_ref=T_REF,
     final_index=-1,
     eps=1e-12,
     save_name="plots/Figure10_loading_summary.png",
@@ -3325,16 +3376,21 @@ def plot_figure10_loading_summary(
 
     def read_probe(filename):
         qois_vals, names = load_qois(filename)
+        start = (
+            reference_frame_index(qois_vals, names, t_ref)
+            if slice_start is None
+            else slice_start
+        )
 
         data = {
-            "Uxx": np.asarray(get(qois_vals, names, "U_bar_XX")[slice_start:], dtype=float),
-            "Uyy": np.asarray(get(qois_vals, names, "U_bar_YY")[slice_start:], dtype=float),
-            "Uxy": np.asarray(get(qois_vals, names, "U_bar_XY")[slice_start:], dtype=float),
-            "Uyx": np.asarray(get(qois_vals, names, "U_bar_YX")[slice_start:], dtype=float),
-            "Qx": np.asarray(get(qois_vals, names, "Q_l_avg_x")[slice_start:], dtype=float),
-            "Qy": np.asarray(get(qois_vals, names, "Q_l_avg_y")[slice_start:], dtype=float),
-            "gx": np.asarray(get(qois_vals, names, "grad_p_bar_avg_x")[slice_start:], dtype=float),
-            "gy": np.asarray(get(qois_vals, names, "grad_p_bar_avg_y")[slice_start:], dtype=float),
+            "Uxx": np.asarray(get(qois_vals, names, "U_bar_XX")[start:], dtype=float),
+            "Uyy": np.asarray(get(qois_vals, names, "U_bar_YY")[start:], dtype=float),
+            "Uxy": np.asarray(get(qois_vals, names, "U_bar_XY")[start:], dtype=float),
+            "Uyx": np.asarray(get(qois_vals, names, "U_bar_YX")[start:], dtype=float),
+            "Qx": np.asarray(get(qois_vals, names, "Q_l_avg_x")[start:], dtype=float),
+            "Qy": np.asarray(get(qois_vals, names, "Q_l_avg_y")[start:], dtype=float),
+            "gx": np.asarray(get(qois_vals, names, "grad_p_bar_avg_x")[start:], dtype=float),
+            "gy": np.asarray(get(qois_vals, names, "grad_p_bar_avg_y")[start:], dtype=float),
         }
 
         npts = len(data["Uxx"])
