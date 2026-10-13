@@ -3281,7 +3281,7 @@ def plot_figure10_loading_summary(
         cases = [
             {
                 "mode": "stretch_x",
-                "label": "uniaxial loading",
+                "label": "uniaxial stretching",
                 "pf": 0.0,
                 "use_prediction": True,
             },
@@ -3293,13 +3293,13 @@ def plot_figure10_loading_summary(
             },
             {
                 "mode": "simple_shear",
-                "label": "simple shear loading",
+                "label": "simple shear",
                 "pf": 0.0,
                 "use_prediction": True,
             },
             {
                 "mode": "gas_pressure",
-                "label": "gas pressure loading",
+                "label": "gas pressure",
                 "pf": pg,
                 "use_prediction": True,
             },
@@ -3307,24 +3307,24 @@ def plot_figure10_loading_summary(
 
     if loading_text is None:
         loading_text = {
-            "uniaxial loading": r"$\Delta\lambda_x=0.3$",
+            "uniaxial stretching": r"$\Delta\lambda_x=0.3$",
             "equibiaxial stretching": r"$\Delta\lambda_x=\Delta\lambda_y=0.3$",
-            "simple shear loading": r"$\gamma=0.3$",
-            "gas pressure loading": rf"$\tilde p_g={pg}~\mathrm{{kPa}}$",
+            "simple shear": r"$\gamma=0.3$",
+            "gas pressure": rf"$\tilde p_g={pg}~\mathrm{{kPa}}$",
         }
 
     colors = {
-        "uniaxial loading": "#0072B2",
+        "uniaxial stretching": "#0072B2",
         "equibiaxial stretching": "#D55E00",
-        "simple shear loading": "#009E73",
-        "gas pressure loading": "#CC79A7",
+        "simple shear": "#009E73",
+        "gas pressure": "#CC79A7",
     }
 
     markers = {
-        "uniaxial loading": "o",
+        "uniaxial stretching": "o",
         "equibiaxial stretching": "s",
-        "simple shear loading": "^",
-        "gas pressure loading": "D",
+        "simple shear": "^",
+        "gas pressure": "D",
     }
 
     def fmt_candidates(x):
@@ -3553,7 +3553,7 @@ def plot_figure10_loading_summary(
 
     plot_settings = [
         ("C_K", r"$C_K=\mathrm{tr}(\tilde{\mathbf{K}})/\mathrm{tr}(\tilde{\mathbf{K}}_0)$"),
-        ("A_K", r"$A_K=\tilde K_{\max}/\tilde K_{\min}$"),
+        ("A_K", r"$A_K=\tilde K_1/\tilde K_2$"),
         ("E_K", r"$E_K=\|\tilde{\mathbf{K}}-\bar{\mathbf{K}}\|_F/\|\tilde{\mathbf{K}}\|_F$"),
     ]
 
