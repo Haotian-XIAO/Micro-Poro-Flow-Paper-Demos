@@ -146,7 +146,9 @@ def plot_linear_homogenization_hollowbox(
                     center,
                     numVertices=6,
                     radius=r0,
-                    orientation=np.pi / 2.0,
+                    # matplotlib's unrotated polygon has a vertex at 90 deg; the mesh
+                    # (run_HollowBox_Mesh) puts the first vertex at angle0 (default 90 deg).
+                    orientation=mesh_params.get("angle0", np.pi / 2.0) - np.pi / 2.0,
                     facecolor="white",
                     edgecolor=matrix_color,
                     linewidth=0.55,
@@ -2594,7 +2596,8 @@ def plot_pg_after_stretch_x_summary(
     stream_Ex=0.2,
     stream_probe="gx",
     n_stream_states=6,
-    slice_start=5,
+    slice_start=None,
+    t_ref=T_REF,
     eps=1e-12,
     theta_lift_threshold_deg=-85.0,
     stream_density=0.8,
@@ -2658,6 +2661,7 @@ def plot_pg_after_stretch_x_summary(
             raise ValueError(f"Gas pressure series not found in {filename}")
 
         data = {
+            "t": np.asarray(get(qois_vals, names, "t"), dtype=float),
             "pg": np.asarray(pg, dtype=float),
             "Uxx": np.asarray(get(qois_vals, names, "U_bar_XX"), dtype=float),
             "Uyy": np.asarray(get(qois_vals, names, "U_bar_YY"), dtype=float),
@@ -2764,7 +2768,12 @@ def plot_pg_after_stretch_x_summary(
                 )
             )
 
-        start = max(0, min(slice_start, len(data_gx["pg"]) - 1))
+        if slice_start is None:
+            # reference = frame closest to t_ref (end of the first load step:
+            # p_g = 0 after the prescribed prestretch; the solid is already stretched)
+            start = int(np.argmin(np.abs(data_gx["t"] - t_ref)))
+        else:
+            start = max(0, min(slice_start, len(data_gx["pg"]) - 1))
 
         k1, k2, theta = principal_quantities(K_list)
 
